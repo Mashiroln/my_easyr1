@@ -11,6 +11,8 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+data/
+codebook/
 downloads/
 eggs/
 .eggs/
@@ -19,6 +21,7 @@ lib64/
 parts/
 sdist/
 var/
+navsim/
 wheels/
 share/python-wheels/
 *.egg-info/
@@ -182,3 +185,7 @@ tensorboard_log/
 # data
 images/
 images*
+
+debug/analysis/*.jsonl
+debug/analysis/*.csv
+debug/analysis/*.parquet

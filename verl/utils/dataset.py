@@ -125,17 +125,19 @@ class RLHFDataset(Dataset):
             data_path, data_split = data_path.split("@")
         else:
             data_split = "train"
+            
+        self.dataset = load_dataset(data_path, split=data_split)
 
-        if os.path.isdir(data_path):
-            # when we use dataset builder, we should always refer to the train split
-            file_type = os.path.splitext(os.listdir(data_path)[0])[-1][1:].replace("jsonl", "json")
-            self.dataset = load_dataset(file_type, data_dir=data_path, split=data_split)
-        elif os.path.isfile(data_path):
-            file_type = os.path.splitext(data_path)[-1][1:].replace("jsonl", "json")
-            self.dataset = load_dataset(file_type, data_files=data_path, split=data_split)
-        else:
-            # load remote dataset from huggingface hub
-            self.dataset = load_dataset(data_path, split=data_split)
+        # if os.path.isdir(data_path):
+        #     # when we use dataset builder, we should always refer to the train split
+        #     file_type = os.path.splitext(os.listdir(data_path)[0])[-1][1:].replace("jsonl", "json")
+        #     self.dataset = load_dataset(file_type, data_dir=data_path, split=data_split)
+        # elif os.path.isfile(data_path):
+        #     file_type = os.path.splitext(data_path)[-1][1:].replace("jsonl", "json")
+        #     self.dataset = load_dataset(file_type, data_files=data_path, split=data_split)
+        # else:
+        #     # load remote dataset from huggingface hub
+        #     self.dataset = load_dataset(data_path, split=data_split)
 
         self.format_prompt = None
         if format_prompt:

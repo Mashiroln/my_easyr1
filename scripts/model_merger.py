@@ -25,6 +25,7 @@ from transformers import (
     AutoModelForCausalLM,
     AutoModelForImageTextToText,
     AutoModelForTokenClassification,
+    Qwen2_5_VLForConditionalGeneration,
     PretrainedConfig,
     PreTrainedModel,
 )
@@ -111,6 +112,10 @@ if __name__ == "__main__":
     with ThreadPoolExecutor(max_workers=min(32, os.cpu_count())) as executor:
         for rank in range(1, total_shards):
             executor.submit(process_one_shard, rank, model_state_dict_lst)
+            
+    for i, sd in enumerate(model_state_dict_lst):
+        if isinstance(sd, str):
+            print(f"⚠️ rank {i} is still empty! (load failed or not waited)")
 
     state_dict: dict[str, list[torch.Tensor]] = {}
     param_placements: dict[str, list[Placement]] = {}

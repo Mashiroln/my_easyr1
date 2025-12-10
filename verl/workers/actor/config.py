@@ -49,7 +49,7 @@ class OptimConfig:
     lr_warmup_ratio: float = 0.0
     lr_warmup_steps: Optional[int] = None
     min_lr_ratio: Optional[float] = None
-    warmup_style: str = "constant"
+    lr_scheduler_type: str = "constant"
     # below are auto keys
     training_steps: int = field(default=-1, init=False)
 
@@ -92,6 +92,8 @@ class ActorConfig:
     """constant C in dual-clip PPO, clips when advantage < -C"""
     loss_avg_mode: str = "token"
     """loss average mode: `token`, `seq`"""
+    loss_type: str = "default"
+    """loss type: `default`, `gspo`, `cispo`"""
     ppo_epochs: int = 1
     """number of ppo epochs for each rollout batch"""
     padding_free: bool = True

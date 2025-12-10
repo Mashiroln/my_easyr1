@@ -5,21 +5,22 @@ set -x
 # python /mnt/data/ccy/verl/scripts_train/check_gpu.py
 
 # MODEL_PATH=/mnt/data/ccy/VLA_train/output/Qwen2_5_VL/3B_navsim_poutine_cot_1view_thinking_bs32_stage2_openvit
-MODEL_PATH=/mnt/data/ccy/VLA_train/output/Qwen2_5_VL/3B_navsim_action_train_v12_stage2_openvit_bs129
+# MODEL_PATH=/mnt/data/ccy/VLA_train/output/Qwen2_5_VL/3B_navsim_action_train_v12_stage2_openvit_bs129
 # MODEL_PATH=/mnt/data/ccy/EasyR1/checkpoints/easy_r1/qwen2_5_vl_3b_navsim_normtrajtext_cot_filter_dynamic_6k/global_step_88/actor/huggingface
+MODEL_PATH=/mnt/data/ccy/VLA_train/output/Qwen2_5_VL/3B_navsim_poutine_cot_1view_thinking_bs32_stage2_openvit_normalized2
 
 # data_path=/mnt/data/ccy/EasyR1/data/navsim_cot1view_filter_mix_dynamic_hard_3k
 # data_path=/mnt/data/ccy/EasyR1/data/navsim_normtrajtext_cot_filter_dynamic_6k
 # data_path=/mnt/data/ccy/EasyR1/data/navsim_normtrajtext_cot_filter_mix_88step_1_5k
-data_path=/mnt/data/ccy/EasyR1/data/navsim_cot_action_k12_full
+data_path=/mnt/data/ccy/EasyR1/data/navsim_normtrajtext_cot_full_easyr1
 
 # exp_name=qwen2_5_vl_3b_navsim_grpo_balanced_analysis
 # exp_name=entropy_max_analysis
 # exp_name=qwen2_5_vl_3b_navsim_grpo_mix_dynamic_hard_3k
 
 # exp_name=qwen2_5_vl_3b_navsim_normtrajtext_cot_filter_mix_88step_1_5k
-exp_name=navsim_cot_action_k12_dynamic_6k_full_stats_60_step
-reward_function_path=/mnt/data/ccy/EasyR1/verl/utils/reward_score/navsim/navsim_reward_action.py
+exp_name=qwen2_5_vl_3b_navsim_normtrajtext_cot_dynamic_6k_dapo_30step
+reward_function_path=/mnt/data/ccy/EasyR1/verl/utils/reward_score/navsim/navsim_reward_text.py
 
 
 # For traj only:
@@ -48,5 +49,5 @@ python3 -m verl.trainer.main \
     trainer.total_epochs=9 \
     trainer.val_freq=1 \
     trainer.save_freq=-1 \
-    trainer.load_checkpoint_path=/mnt/data/ccy/EasyR1/checkpoints/easy_r1/qwen2_5_vl_3b_navsim_action_k12_dynamic_6k/global_step_60 \
+    trainer.load_checkpoint_path=/mnt/data/ccy/EasyR1/checkpoints/easy_r1/qwen2_5_vl_3b_navsim_normtrajtext_cot_dynamic_6k_dapo/global_step_30/ \
     # trainer.val_only=true \

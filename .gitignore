@@ -21,8 +21,8 @@ lib64/
 parts/
 sdist/
 var/
-navsim/
-navsim/*
+navsim/*_logs/
+navsim/*_blobs/
 wheels/
 share/python-wheels/
 *.egg-info/
@@ -190,3 +190,6 @@ images*
 debug/analysis/*.jsonl
 debug/analysis/*.csv
 debug/analysis/*.parquet
+debug/analysis/*/*.jsonl
+debug/analysis/*/*.csv
+debug/analysis/*/*.parquet

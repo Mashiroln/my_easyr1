@@ -42,6 +42,13 @@ except ImportError:
     pass
 
 
+def _entropy_from_logits(logits: torch.Tensor):
+    """Calculate entropy from logits."""
+    pd = torch.nn.functional.softmax(logits, dim=-1)
+    entropy = torch.logsumexp(logits, dim=-1) - torch.sum(pd * logits, dim=-1)
+    return entropy
+
+
 __all__ = ["DataParallelPPOActor"]
 
 
@@ -256,6 +263,41 @@ class DataParallelPPOActor(BasePPOActor):
                     # all return: (bsz, response_length)
                     log_probs = self._forward_micro_batch(model_inputs, temperature=temperature)
 
+                    # --- Detailed Entropy Logging (using -log_probs as estimator) ---
+                    with torch.no_grad():
+                        # Define special tokens (TODO: Make configurable)
+                        ANSWER_START_ID = 151671 
+                        ANSWER_END_ID = 151672
+                        
+                        responses = model_inputs["responses"]
+                        response_mask = model_inputs["response_mask"]
+                        entropy_est = -log_probs.detach()
+
+                        # Create answer mask
+                        answer_mask = torch.zeros_like(response_mask)
+                        bsz = responses.shape[0]
+                        
+                        for i in range(bsz):
+                            start_indices = torch.nonzero(responses[i] == ANSWER_START_ID, as_tuple=True)[0]
+                            end_indices = torch.nonzero(responses[i] == ANSWER_END_ID, as_tuple=True)[0]
+                            
+                            if len(start_indices) > 0 and len(end_indices) > 0:
+                                start_idx = start_indices[0].item()
+                                end_idx = end_indices[0].item()
+                                if end_idx > start_idx + 1:
+                                    answer_mask[i, start_idx + 1 : end_idx] = 1
+                        
+                        answer_mask = answer_mask * response_mask
+                        thinking_mask = response_mask * (1 - answer_mask)
+                        
+                        def masked_mean(val, mask):
+                            return (val * mask).sum() / (mask.sum() + 1e-6)
+
+                        mean_entropy_output = masked_mean(entropy_est, response_mask)
+                        mean_entropy_answer = masked_mean(entropy_est, answer_mask)
+                        mean_entropy_thinking = masked_mean(entropy_est, thinking_mask)
+                    # ---------------------------------------------------------------
+
                     pg_loss, pg_metrics = compute_policy_loss(
                         old_log_probs=old_log_probs,
                         log_probs=log_probs,
@@ -290,6 +332,9 @@ class DataParallelPPOActor(BasePPOActor):
                         "actor/pg_clipfrac_lower": pg_metrics["pg_clipfrac_lower"],
                         "actor/entropy_loss": pg_metrics["entropy_loss"],
                         "actor/ppo_kl": pg_metrics["ppo_kl"],
+                        "actor/entropy_output": mean_entropy_output.item(),
+                        "actor/entropy_answer": mean_entropy_answer.item(),
+                        "actor/entropy_thinking": mean_entropy_thinking.item(),
                     }
                     append_to_dict(metrics, batch_metrics)
 

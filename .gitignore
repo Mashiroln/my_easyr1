@@ -23,6 +23,7 @@ sdist/
 var/
 navsim/*_logs/
 navsim/*_blobs/
+navsim/*
 wheels/
 share/python-wheels/
 *.egg-info/

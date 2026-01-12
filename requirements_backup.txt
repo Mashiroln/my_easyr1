@@ -13,9 +13,8 @@ pylatexenc
 qwen-vl-utils
 tensordict
 torchdata
-transformers==4.57.1
-vllm==0.11.0
+transformers>=4.54.0,<=4.57.1
+vllm>=0.8.0
 wandb
-torch==2.8.0
-tensorboard
-ray==2.48.0
+torch==2.6.0
+ray==2.46.0

@@ -81,6 +81,37 @@ def parse_text_waypoint(output_text):
 
     return result
     
+def parse_trajectory_string_after_tag(text: str, tag='"future_trajectory"'):
+    """
+    鲁棒解析 tag字段后的 [x, y, yaw] 数据。
+    不依赖 <answer> 标签，仅依赖字段名顺序和方括号结构。
+    """
+    try:
+
+        parts = text.split(tag)
+        
+        if len(parts) < 2:
+            return None
+        
+        content_after_key = parts[-1]
+        list_match = re.search(r'\[(.*?)\]', content_after_key, re.DOTALL)
+        
+        if not list_match:
+            return None
+            
+        target_content = list_match.group(1) # 获取 [...] 内部的字符串
+        coord_pattern = r'\(\s*([+-]?\d+\.?\d*)\s*,\s*([+-]?\d+\.?\d*)\s*,\s*([+-]?\d+\.?\d*)\s*\)'
+        matches_3d = re.findall(coord_pattern, target_content)
+
+        if matches_3d and len(matches_3d) >= 8:
+            points = [(float(x), float(y), float(yaw)) for x, y, yaw in matches_3d[:8]]
+            return points
+        
+        return None 
+
+    except Exception as e:
+        logger.warning(f"An unexpected exception occurred during yaw trajectory parsing: {e}")
+        return None
 
 def parse_text_waypoint_dict(output_text):
     """
@@ -119,8 +150,11 @@ def parse_text_waypoint_dict(output_text):
 
     return result
 
+# stat_path = '/mnt/data/ccy/EasyR1/verl/utils/reward_score/navsim/trajectory_stats_train.json' # 103k
+stat_path = '/mnt/data/ccy/datasets/golden_navtrain/expand_tools/trajectory_stats_refine_v4.json'  # refine 103k v4
+
 global means, stds
-with open('/mnt/data/ccy/EasyR1/verl/utils/reward_score/navsim/trajectory_stats_train.json', 'r', encoding='utf-8') as f: 
+with open(stat_path, 'r', encoding='utf-8') as f: 
     data = json.load(f)
     means = np.array(data['mean'])
     stds = np.array(data['std'])

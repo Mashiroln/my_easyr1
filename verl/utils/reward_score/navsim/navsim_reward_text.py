@@ -7,7 +7,7 @@ import random
 from typing import Any, Dict, List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from verl.utils.reward_score.navsim.helper import parse_text_waypoint, parse_text_waypoint_dict, denormalize
+from verl.utils.reward_score.navsim.helper import parse_text_waypoint, parse_text_waypoint_dict, denormalize, parse_trajectory_string_after_tag
 from verl.utils.reward_score.navsim.pdms_logger import BatchJsonlLogger
 
 import logging
@@ -17,6 +17,8 @@ from collections import defaultdict
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+REWARD_NAME = "navsim_span_grpo"
+REWARD_TYPE = "batch"
 
 time_str = datetime.now().strftime("%m%d%H%M")
 log_file_path = f"/mnt/data/ccy/EasyR1/debug/analysis/generations_dynamic_{time_str}.jsonl"
@@ -155,7 +157,8 @@ def compute_score_fast(reward_inputs: List[Dict[str, Any]], format_weight: float
         ground_truth = reward_input["ground_truth"]
         token = ground_truth["token"]
         
-        poses = parse_text_waypoint(response)
+        # poses = parse_text_waypoint(response)
+        poses = parse_trajectory_string_after_tag(response, "future_trajectory")
         poses = denormalize(poses)
         
         pdms, scaled_pdms = simulator_reward(token, poses, False)

@@ -188,7 +188,7 @@ tensorboard_log/
 images/
 images*
 
-debug/*
-!debug/
+debug/**
+!debug/**/
 !debug/**/*.py
 !debug/**/*.sh

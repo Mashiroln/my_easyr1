@@ -188,9 +188,7 @@ tensorboard_log/
 images/
 images*
 
-debug/analysis/*.jsonl
-debug/analysis/*.csv
-debug/analysis/*.parquet
-debug/analysis/*/*.jsonl
-debug/analysis/*/*.csv
-debug/analysis/*/*.parquet
+debug/*
+!debug/
+!debug/**/*.py
+!debug/**/*.sh

@@ -5,11 +5,12 @@ from tqdm import tqdm
 import os
 
 # ============ 配置 ============
-exp_name = "qwen3vl_8b"
-out_root = f"/mnt/data/ccy/EasyR1/debug/analysis/{exp_name}"
-parquet_path = os.path.join(out_root, "generations_full_cot_norm_sft3ep.parquet")  # 你提取后的文件
+exp_name = "4B_navsim_ps01_120kv3_pn103kv3_selfnorm_stage2"
+# out_root = f"/mnt/data/ccy/EasyR1/debug/analysis/{exp_name}"
+out_root = f"/mnt/data/ccy/VLA_train/parallel_infer/output/{exp_name}"
+parquet_path = os.path.join(out_root, "generations_full.parquet")  # 你提取后的文件
 tmp_csv_path = os.path.join(out_root, "tmp_filtered.csv")    # 中间文件
-output_csv_path = os.path.join(out_root, "group_stats_cot_norm_sft3ep.csv")  # 输出
+output_csv_path = os.path.join(out_root, "generations_full.csv")  # 输出
 chunk_size = 500_000  # 每批处理的行数，可根据内存调整
 # ==============================
 
@@ -25,7 +26,12 @@ with open(tmp_csv_path, "w") as f_out:
         # df = df[df["parsed_ok"] == True]
 
         # 只保留必要列
-        df = df[["token", "pdms", "pdms_scaled"]]
+        if "pdms_scaled" in df.columns and "pdms" in df.columns:
+            df = df[["token", "pdms", "pdms_scaled"]]
+        else:
+            df = df[["token", "score"]]
+            df["pdms"] = df["score"]  # 如果没有 pdms_scaled，就用 score 填充 pdms 列，保持兼容
+            df["pdms_scaled"] = df["score"]  # 同样填充 pdms_scaled 列
 
         if not header_written:
             df.to_csv(f_out, index=False, header=True)

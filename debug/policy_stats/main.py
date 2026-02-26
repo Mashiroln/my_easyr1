@@ -13,21 +13,22 @@ if __name__ == "__main__":
     os.makedirs(OUTPUT_ROOT, exist_ok=True)
     
     exp_list = [
-        os.path.join(EXP_ROOT, "navie_cot_text"),
+        # os.path.join(EXP_ROOT, "navie_cot_text"),
         # os.path.join(EXP_ROOT, "normalized_cot_text"),
         # os.path.join(EXP_ROOT, "recog"),
         # os.path.join(EXP_ROOT, "norm_cot_text_88step_npu"),
-        # os.path.join(EXP_ROOT, "norm_cot_text_130step")
+        # os.path.join(EXP_ROOT, "norm_cot_text_130step"),
+        os.path.join(EXP_ROOT, "diffusiondrive")
     ]
     
-    BATCH_SIZE = 1024
+    BATCH_SIZE = 8192*4
     NUM_WORKERS = 8
 
     # 2. GT (Ground Truth) 文件路径
     gt_jsonl_path = "/mnt/data/ccy/EasyR1/debug/analysis/human_gt/navtrain_human_gt_policy_stats.jsonl" 
 
     # 3. K 的最大值 (截断)
-    MAX_K = 49
+    MAX_K = 8
     
     # --- 运行评估 ---
     print("开始评估...")

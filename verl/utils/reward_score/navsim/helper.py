@@ -4,7 +4,9 @@ import json
 import math
 import os
 import logging
+import importlib
 import numpy as np
+from typing import Callable, List, Optional, Tuple
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -150,19 +152,115 @@ def parse_text_waypoint_dict(output_text):
 
     return result
 
-# stat_path = '/mnt/data/ccy/EasyR1/verl/utils/reward_score/navsim/trajectory_stats_train.json' # 103k
-stat_path = '/mnt/data/ccy/datasets/golden_navtrain/expand_tools/trajectory_stats_refine_v4.json'  # refine 103k v4
+def parse_cpr_text_waypoint(output_text: str) -> List[List[float]]:
+    """Same parsing logic, but strictly limited to the planning trajectory."""
+    result: List[List[float]] = []
 
-global means, stds
-with open(stat_path, 'r', encoding='utf-8') as f: 
-    data = json.load(f)
-    means = np.array(data['mean'])
-    stds = np.array(data['std'])
+    if not output_text or not isinstance(output_text, str):
+        return result
+
+    # 1. 定位 planning trajectory 的起始位置
+    keyword = "Here is the planning trajectory"
+    idx = output_text.find(keyword)
+
+    # 2. 如果找到了关键词，截取该关键词之后的所有内容
+    if idx != -1:
+        target_text = output_text[idx:]
+    else:
+        # 容错处理：如果 LLM 幻觉没有生成这句话，为了防止误提取 coarsed trajectory，直接返回空列表跳过此样本
+        return result
+
+    # 3. 仅对截取后的 target_text 进行坐标提取
+    matches = re.findall(r"\(([-+]?\d*\.?\d+),\s*([-+]?\d*\.?\d+),\s*([-+]?\d*\.?\d+)\)", target_text)
+    if matches:
+        result = [list(map(float, m)) for m in matches]
+
+    return result
+
+# ------------------------------
+# Stats paths (configurable)
+# ------------------------------
+# Training scripts can override these via env vars:
+# - NAVSIM_STAT_PATH
+# - NAVSIM_STAT_PATH_SYN
+_DEFAULT_STAT_PATH = "/mnt/data/ccy/EasyR1/verl/utils/reward_score/navsim/trajectory_stats_train.json"
+
+stat_path = os.environ.get("NAVSIM_STAT_PATH", _DEFAULT_STAT_PATH)
+stat_path_syn_env = os.environ.get("NAVSIM_STAT_PATH_SYN", "").strip()
+stat_path_syn = stat_path_syn_env if stat_path_syn_env else None
 
 
-def denormalize(poses):
-    result = np.array(poses) * stds + means
+def _load_stats(path: str) -> Tuple[np.ndarray, np.ndarray]:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return np.array(data["mean"]), np.array(data["std"])
+
+
+global means, stds, means_syn, stds_syn
+means, stds = _load_stats(stat_path)
+if stat_path_syn:
+    means_syn, stds_syn = _load_stats(stat_path_syn)
+else:
+    means_syn, stds_syn = means, stds
+
+
+_SYN_TOKEN_RE = re.compile(r"-00\d$")
+
+
+def _use_syn_stats(token: Optional[str]) -> bool:
+    return bool(token) and bool(_SYN_TOKEN_RE.search(str(token)))
+
+
+def denormalize(poses: List[List[float]], token: Optional[str] = None) -> List[List[float]]:
+    use_syn = _use_syn_stats(token)
+    # print(f"Denormalizing poses for token={token} using {'synthetic' if use_syn else 'train'} stats.")
+    m, s = (means_syn, stds_syn) if use_syn else (means, stds)
+    result = np.array(poses) * s + m
     return result.tolist()
+
+
+# ------------------------------
+# Trajectory parsing (configurable)
+# ------------------------------
+# Training scripts can override these via env vars:
+# - NAVSIM_TRAJ_PARSER_FUNC: import path "package.module:function"
+
+
+def _load_callable_from_spec(spec: str) -> Optional[Callable[[str], List[List[float]]]]:
+    """Load a callable from a spec like 'a.b.c:func'. Returns None if invalid."""
+
+    s = (spec or "").strip()
+    if not s or ":" not in s:
+        return None
+    mod_name, func_name = s.split(":", 1)
+    mod_name, func_name = mod_name.strip(), func_name.strip()
+    if not mod_name or not func_name:
+        return None
+    try:
+        mod = importlib.import_module(mod_name)
+        fn = getattr(mod, func_name, None)
+        if callable(fn):
+            return fn  # type: ignore[return-value]
+    except Exception:
+        return None
+    return None
+
+
+def get_trajectory_parser(parser: Optional[str] = None) -> Callable[[str], List[List[float]]]:
+    """Return a callable that parses output_text -> poses.
+
+    This indirection lets the launcher script choose parsing behavior.
+    """
+
+    # Only supported mechanism: direct callable import path.
+    fn_spec = (os.environ.get("NAVSIM_TRAJ_PARSER_FUNC", "") or "").strip()
+    fn = _load_callable_from_spec(fn_spec)
+    if fn is None:
+        raise ValueError(
+            "NAVSIM_TRAJ_PARSER_FUNC is required (expected 'package.module:function'). "
+            f"Got: {fn_spec!r}"
+        )
+    return fn
 
 
 if __name__ == '__main__':

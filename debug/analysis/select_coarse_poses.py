@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""Select best poses per token from a JSONL file.
+"""Select coarse poses with pdms aimed near 0.90 and below 0.95.
 
-Rules:
-- Any entry with pdms > 0.95 has highest priority. Once a token has a >0.95 entry, keep the first such entry (no replacement by even higher pdms values).
-- If no >0.95 entry exists for a token, pick the entry with the highest pdms among the <=0.95 group.
-- Output poses rounded to 2 decimals into a JSONL file.
+Strategy (no token drops):
+- Load recog and human_gt JSONL streams and keep *all* entries per token.
+- If a token has any 0.85 <= pdms < 0.95 entries, pick the one closest to TARGET_PDMS (tie → lower pdms).
+- Otherwise, if only below-band entries exist, pick the highest pdms below 0.85 (still closest to target).
+- Otherwise (all are >= 0.95), pick the lowest pdms to keep the global mean under 0.95.
+- Output poses rounded to two decimals, along with mean pdms statistics.
 """
 
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List
 
-PDMS_THRESHOLD = 0.95
+PDMS_LOW = 0.85
+PDMS_HIGH = 0.95
+TARGET_PDMS = 0.90
 
 
 def round_pose(poses: List[List[float]]) -> List[List[float]]:
-    """Round pose coordinates to two decimals."""
     return [[round(x, 2) for x in pose] for pose in poses]
 
 
@@ -29,49 +32,48 @@ def load_jsonl(path: Path) -> Iterable[dict]:
             try:
                 yield json.loads(line)
             except json.JSONDecodeError as exc:
-                raise ValueError(f"Failed to parse JSON on line {line_no}") from exc
+                raise ValueError(f"Failed to parse JSON on line {line_no} of {path}") from exc
 
 
-def select_best_entries(records: Iterable[dict]) -> Tuple[Dict[str, dict], int]:
-    """Select best entry per token per the pdms rules.
+def gather_candidates(paths: List[Path]) -> Dict[str, List[dict]]:
+    candidates: Dict[str, List[dict]] = {}
+    for path in paths:
+        for rec in load_jsonl(path):
+            token = rec.get("token")
+            pdms = rec.get("pdms")
+            poses = rec.get("poses")
+            if token is None or pdms is None or poses is None:
+                continue
+            candidates.setdefault(token, []).append({"pdms": float(pdms), "poses": poses})
+    return candidates
 
-    Returns the best map and total lines processed.
-    """
-    best: Dict[str, dict] = {}
-    total = 0
-    for rec in records:
-        total += 1
-        token = rec.get("token")
-        pdms = rec.get("pdms")
-        poses = rec.get("poses")
-        if token is None or pdms is None or poses is None:
-            # skip malformed records silently
-            continue
 
-        current = best.get(token)
-        has_high = pdms > PDMS_THRESHOLD
+def select_per_token(candidates: Dict[str, List[dict]]) -> Dict[str, dict]:
+    selected: Dict[str, dict] = {}
+    for token, recs in candidates.items():
+        in_band = [r for r in recs if PDMS_LOW <= r["pdms"] < PDMS_HIGH]
+        below_band = [r for r in recs if r["pdms"] < PDMS_LOW]
 
-        if current is None:
-            best[token] = {"pdms": pdms, "poses": poses}
-            continue
-
-        cur_pdms = current["pdms"]
-        cur_high = cur_pdms > PDMS_THRESHOLD
-
-        # If we already have a high priority one, keep it
-        if cur_high and has_high:
-            continue
-        if cur_high and not has_high:
-            continue
-        if not cur_high and has_high:
-            best[token] = {"pdms": pdms, "poses": poses}
-            continue
-
-        # Both non-high: take the larger pdms
-        if pdms > cur_pdms:
-            best[token] = {"pdms": pdms, "poses": poses}
-
-    return best, total
+        if in_band:
+            # Closest to target within the desired band; prefer lower pdms on ties.
+            best = min(
+                in_band,
+                key=lambda r: (abs(r["pdms"] - TARGET_PDMS), r["pdms"]),
+            )
+        elif below_band:
+            # Raise toward target by picking the highest pdms below the band.
+            best = max(
+                below_band,
+                key=lambda r: (r["pdms"], -abs(r["pdms"] - TARGET_PDMS)),
+            )
+        else:
+            # All candidates are >= PDMS_HIGH; pick the lowest to keep the mean down.
+            best = min(
+                recs,
+                key=lambda r: (r["pdms"], abs(r["pdms"] - TARGET_PDMS)),
+            )
+        selected[token] = best
+    return selected
 
 
 def write_jsonl(path: Path, best: Dict[str, dict]) -> None:
@@ -86,18 +88,48 @@ def write_jsonl(path: Path, best: Dict[str, dict]) -> None:
             f.write(json.dumps(out, ensure_ascii=False) + "\n")
 
 
+def compute_mean(best: Dict[str, dict]) -> float:
+    if not best:
+        return 0.0
+    return sum(item["pdms"] for item in best.values()) / len(best)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Select coarse poses in desired pdms band")
+    parser.add_argument(
+        "--recog-path",
+        type=Path,
+        default=Path("/mnt/data/ccy/EasyR1/debug/analysis/recog/recog_diverse_policy_stats.jsonl"),
+        help="Input JSONL from recog stats",
+    )
+    parser.add_argument(
+        "--human-path",
+        type=Path,
+        default=Path("/mnt/data/ccy/EasyR1/debug/analysis/human_gt/navtrain_human_gt_policy_stats.jsonl"),
+        help="Auxiliary human GT JSONL",
+    )
+    parser.add_argument(
+        "--output-path",
+        type=Path,
+        default=Path("/mnt/data/ccy/EasyR1/debug/analysis/recog/coarse_poses.jsonl"),
+        help="Output JSONL for selected poses",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
-    input_path = Path("/mnt/data/ccy/EasyR1/debug/analysis/norm_cot_text_130step/denorm_1111_policy_stats.jsonl")
-    output_path = Path("/mnt/data/ccy/EasyR1/debug/analysis/norm_cot_text_130step/coarse_poses.jsonl")
+    args = parse_args()
+    paths = [args.recog_path, args.human_path]
 
-    records = load_jsonl(input_path)
-    best, total = select_best_entries(records)
+    candidates = gather_candidates(paths)
+    selected = select_per_token(candidates)
 
-    write_jsonl(output_path, best)
+    write_jsonl(args.output_path, selected)
 
-    print(f"Processed lines: {total}")
-    print(f"Unique tokens: {len(best)}")
-    print(f"Output written to: {output_path}")
+    mean_pdms = compute_mean(selected)
+    print(f"Tokens selected: {len(selected)}")
+    print(f"Mean pdms: {mean_pdms:.4f}")
+    print(f"Output written to: {args.output_path}")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import os
 import requests
 import re
 import json
@@ -7,7 +8,13 @@ import random
 from typing import Any, Dict, List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from verl.utils.reward_score.navsim.helper import parse_text_waypoint, parse_text_waypoint_dict, denormalize, parse_trajectory_string_after_tag
+from verl.utils.reward_score.navsim.helper import (
+    parse_text_waypoint,
+    parse_text_waypoint_dict,
+    denormalize,
+    parse_trajectory_string_after_tag,
+    get_trajectory_parser,
+)
 from verl.utils.reward_score.navsim.pdms_logger import BatchJsonlLogger
 
 import logging
@@ -21,7 +28,8 @@ REWARD_NAME = "navsim_span_grpo"
 REWARD_TYPE = "batch"
 
 time_str = datetime.now().strftime("%m%d%H%M")
-log_file_path = f"/mnt/data/ccy/EasyR1/debug/analysis/generations_dynamic_{time_str}.jsonl"
+exp_name = os.environ.get("EXP_NAME", "default_exp")
+log_file_path = f"/mnt/data/ccy/EasyR1/debug/analysis/generations_{exp_name}_{time_str}.jsonl"
 log_lock = threading.Lock()
 
 def log_to_jsonl(data: dict, file_path: str):
@@ -55,8 +63,8 @@ PAYLOAD = {
 }
 '''
 
-url_pool = ["http://0.0.0.0:8901/score"]
-url_pool_group = ["http://0.0.0.0:8901/score_group"]
+url_pool = ["http://0.0.0.0:10901/score"]
+url_pool_group = ["http://0.0.0.0:10901/score_group"]
 headers = {"Content-Type": "application/json"}
 retries = 3
 timeout = 120
@@ -150,6 +158,8 @@ def format_reward(parsed):
 def compute_score_fast(reward_inputs: List[Dict[str, Any]], format_weight: float = 0.1) -> List[Dict[str, float]]:
     if not isinstance(reward_inputs, list):
         raise ValueError("Please use `reward_type=batch` for pdms reward function.")
+
+    parse_fn = get_trajectory_parser()
     
     # 定义单个请求的处理函数
     def process_single_input(reward_input: Dict[str, Any]) -> Dict[str, float]:
@@ -158,12 +168,14 @@ def compute_score_fast(reward_inputs: List[Dict[str, Any]], format_weight: float
         token = ground_truth["token"]
         
         # poses = parse_text_waypoint(response)
-        poses = parse_trajectory_string_after_tag(response, "future_trajectory")
-        poses = denormalize(poses)
+        poses = parse_fn(response)
+        # TODO: Denorm已关闭，正常训练记得改回来！
+        # poses = denormalize(poses)
         
         pdms, scaled_pdms = simulator_reward(token, poses, False)
         # format_score = format_reward(parsed_dict)
-        format_score = 1.0 if pdms >= 0.9 else 0.0 # 简化格式奖励为二值，因为当前是traj only，没有thinking，纯粹优化采样
+        # format_score = 1.0 if pdms >= 0.9 else 0.0 # 简化格式奖励为二值，因为当前是traj only，没有thinking，纯粹优化采样
+        format_score = 1.0
         if pdms is None:
             pdms = 0.0
         if scaled_pdms is None:
@@ -175,12 +187,14 @@ def compute_score_fast(reward_inputs: List[Dict[str, Any]], format_weight: float
         save_dict["pdms"] = pdms
         save_dict["pdms_scaled"] = scaled_pdms
         save_dict["format_score"] = format_score
-        save_dict["overall_score"] =(1 - format_weight) * pdms + format_weight * format_score
+        # save_dict["overall_score"] =(1 - format_weight) * pdms + format_weight * format_score
+        save_dict["overall_score"] = scaled_pdms
         log_to_jsonl(save_dict, log_file_path)
         # batch_logger.write(save_dict)
         
         return {
-            "overall": (1 - format_weight) * pdms + format_weight * format_score,
+            # "overall": (1 - format_weight) * pdms + format_weight * format_score,
+            "overall": scaled_pdms,
             "format": format_score,
             "accuracy": scaled_pdms,
             "pdms": pdms
@@ -202,7 +216,7 @@ def compute_score_fast(reward_inputs: List[Dict[str, Any]], format_weight: float
                 result = future.result()
                 scores[idx] = result
             except Exception as e:
-                scores[idx] = {"overall": 0.0, "format": 0.0, "accuracy": 0.0}
+                scores[idx] = {"overall": 0.0, "format": 0.0, "accuracy": 0.0, "pdms": 0.0}
                 print(f"Error processing input {idx}: {str(e)}")
     
     return scores
@@ -349,10 +363,11 @@ def process_token_batch(
     parsed_data_map = {} 
 
     # 1. 预处理：解析 poses 并分离有效和无效的
+    parse_fn = get_trajectory_parser()
     for original_index, reward_input in group:
         response = reward_input["response"]
-        poses = parse_text_waypoint(response)
-        poses = denormalize(poses)
+        poses = parse_fn(response)
+        poses = denormalize(poses, token=str(token))
         
         parsed_data_map[original_index] = {"poses": poses, "reward_input": reward_input}
         

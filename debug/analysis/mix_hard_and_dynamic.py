@@ -19,7 +19,7 @@ import numpy as np
 import io
 import os
 
-exp_name = "normalized_cot_text"
+exp_name = "norm_cot_text_130step"
 out_root = f"/mnt/data/ccy/EasyR1/debug/analysis/{exp_name}"
 # csv_path_origin_dynamic = "/mnt/data/ccy/EasyR1/debug/analysis/normalized_cot_text/group_stats_cot_norm_88step.csv"
 # csv_path_current_log = os.path.join(out_root, "group_stats_cot_norm_88step.csv")
@@ -27,10 +27,10 @@ out_root = f"/mnt/data/ccy/EasyR1/debug/analysis/{exp_name}"
 csv_path_origin_dynamic = None
 csv_path_current_log = None
 
-csv_path_current_dynamic = os.path.join(out_root, "group_stats_filtered_0.5_88_step.csv")
-csv_path_hard = os.path.join(out_root, "group_stats_filtered_hard1k.csv")
+csv_path_current_dynamic = os.path.join(out_root, "group_stats_filtered_0.1.csv")
+csv_path_hard = os.path.join(out_root, "group_stats_filtered_hard3k.csv")
 
-csv_out_path = os.path.join(out_root, "group_stats_mixed_dynamic_hard_88step.csv")
+csv_out_path = os.path.join(out_root, "group_stats_mixed_dynamic_hard_130step.csv")
 
 # 1. 加载数据
 if csv_path_origin_dynamic is not None and csv_path_current_log is not None:

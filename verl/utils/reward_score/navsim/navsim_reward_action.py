@@ -52,7 +52,7 @@ PAYLOAD = {
 }
 '''
 
-url_pool = ["http://0.0.0.0:8901/score"]
+url_pool = ["http://0.0.0.0:10901/score"]
 headers = {"Content-Type": "application/json"}
 retries = 3
 timeout = 120
@@ -144,7 +144,8 @@ def compute_score_fast(reward_inputs: List[Dict[str, Any]], format_weight: float
         _, poses = parse_action_tokens(response, codebook)
         pdms, scaled_pdms = simulator_reward(token, poses, False)
         # format_score = format_reward(parsed_dict)
-        format_score = 1.0 if pdms >= 0.9 else 0.0 # 简化格式奖励为二值，因为当前是traj only，没有thinking，纯粹优化采样
+        # format_score = 1.0 if pdms >= 0.9 else 0.0 # 简化格式奖励为二值，因为当前是traj only，没有thinking，纯粹优化采样
+        format_score = 1.0
         if pdms is None:
             pdms = 0.0
         if scaled_pdms is None:
@@ -156,18 +157,20 @@ def compute_score_fast(reward_inputs: List[Dict[str, Any]], format_weight: float
         save_dict["pdms"] = pdms
         save_dict["pdms_scaled"] = scaled_pdms
         save_dict["format_score"] = format_score
-        save_dict["overall_score"] =(1 - format_weight) * pdms + format_weight * format_score
+        # save_dict["overall_score"] =(1 - format_weight) * pdms + format_weight * format_score
+        save_dict["overall_score"] = scaled_pdms
         log_to_jsonl(save_dict, log_file_path)
         # batch_logger.write(save_dict)
         
         return {
-            "overall": (1 - format_weight) * pdms + format_weight * format_score,
+            # "overall": (1 - format_weight) * pdms + format_weight * format_score,
+            "overall": scaled_pdms,
             "format": format_score,
             "accuracy": pdms,
         }
     
     # 多线程并发处理，保持结果顺序与输入一致
-    with ThreadPoolExecutor(max_workers=64) as executor:  # 可根据服务器承载能力调整
+    with ThreadPoolExecutor(max_workers=96) as executor:  # 可根据服务器承载能力调整
         # 提交所有任务并记录顺序
         future_to_index = {
             executor.submit(process_single_input, req): i 

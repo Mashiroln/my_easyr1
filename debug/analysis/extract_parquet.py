@@ -8,12 +8,12 @@ from tqdm import tqdm
 import os
 
 # ========= 配置 =========
-out_root = "/mnt/data/ccy/EasyR1/debug/analysis/qwen3vl_8b"
-input_path = "/mnt/data/ccy/EasyR1/debug/analysis/qwen3vl_8b/generations_dynamic_sft3ep.jsonl"
+out_root = "/mnt/data/ccy/EasyR1/debug/analysis/norm_cot_text_130step"
+input_path = "/mnt/data/ccy/EasyR1/debug/analysis/norm_cot_text_130step/denorm_1111_policy_stats.jsonl"
 
 os.makedirs(out_root, exist_ok=True)
 
-extracted_parquet = os.path.join(out_root, "generations_full_cot_norm_88step.parquet")
+extracted_parquet = os.path.join(out_root, "denorm_1111_policy_stats.parquet")
 # summary_csv = "group_summary.csv"
 chunk_size = 100000  # 每批多少条写入一次 parquet
 

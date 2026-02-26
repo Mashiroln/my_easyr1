@@ -1,2 +1,2 @@
-python scripts/navsim_action_full_easyr1.py --input_json_path /mnt/data/ccy/datasets/golden_navtrain/output/QA_navsim_refined_coarse2fine_norm_103k_v4.json \
-                                  --local_dir ./data/refine_norm_v3tov4
+python scripts/navsim_action_full_easyr1.py --input_json_path /mnt/data/ccy/datasets/golden_navtrain/golden_de/output/finetune/norm/QA_train_navtrain_simscale_pdm_01_223k_v3_self_norm.json \
+                                  --local_dir ./data/p_sn_223kv3_selfnorm_full

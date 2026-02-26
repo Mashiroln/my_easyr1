@@ -15,14 +15,17 @@
 The main entry point to run the PPO algorithm
 """
 
+from contextlib import nullcontext
 from typing import Literal, Optional, Union, cast
 
 import numpy as np
+import peft
 import psutil
 import torch
 import torch.distributed as dist
 from accelerate import init_empty_weights
 from codetiming import Timer
+from peft import TaskType, get_peft_model
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.fsdp import CPUOffload, MixedPrecision, ShardingStrategy
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -92,6 +95,9 @@ class FSDPWorker(Worker):
 
         if self.config.actor.disable_kl:
             self._has_ref = False
+
+        self._lora_rank = self.config.actor.model.lora.rank
+        self._is_lora = self._lora_rank > 0
 
         self._use_param_offload = False
         self._use_optimizer_offload = False
@@ -222,12 +228,37 @@ class FSDPWorker(Worker):
 
         model = cast(PreTrainedModel, model)  # lint
         model.tie_weights()  # avoid hanging
-        model = model.to(torch_dtype)
-        if model_config.enable_gradient_checkpointing:
-            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
         if role == "ref":
             model.requires_grad_(False)
+
+        is_lora_model = self._is_lora and role == "actor"
+        if is_lora_model:
+            self.print_rank0("Applying LoRA to actor module")
+            model.enable_input_require_grads()
+            if model_config.lora.target_modules == "all-linear":
+                target_modules = model_config.lora.target_modules
+            else:
+                target_modules = [item.strip() for item in model_config.lora.target_modules.split(",") if item.strip()]
+
+            lora_config = peft.LoraConfig(
+                task_type=TaskType.CAUSAL_LM,
+                r=model_config.lora.rank,
+                lora_alpha=model_config.lora.alpha,
+                target_modules=target_modules,
+                exclude_modules=model_config.lora.exclude_modules,
+            )
+            model = get_peft_model(model, lora_config)
+            for p in model.parameters():
+                if not p.requires_grad:
+                    p.data = p.to(torch.bfloat16)
+                else:
+                    p.data = p.to(torch_dtype)
+        else:
+            model = model.to(torch_dtype)
+
+        if model_config.enable_gradient_checkpointing:
+            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
         if model_config.freeze_vision_tower:
             if hasattr(model, "model") and hasattr(model.model, "visual"):  # transformers >= 4.52.0
@@ -248,8 +279,9 @@ class FSDPWorker(Worker):
             param_dtype=PrecisionType.to_dtype(fsdp_config.mp_param_dtype),
             reduce_dtype=PrecisionType.to_dtype(fsdp_config.mp_reduce_dtype),
             buffer_dtype=PrecisionType.to_dtype(fsdp_config.mp_buffer_dtype),
+            cast_forward_inputs=True,
         )
-        auto_wrap_policy = get_fsdp_wrap_policy(model)
+        auto_wrap_policy = get_fsdp_wrap_policy(model, is_lora_model=is_lora_model)
         self.print_rank0(f"FSDP wrap policy: {auto_wrap_policy}.")
 
         if self.device_mesh.ndim == 2:
@@ -353,11 +385,17 @@ class FSDPWorker(Worker):
             raise ValueError(f"rollout world size {self.world_size} is not divisible by tp size {tp_size}.")
 
         rollout_device_mesh = init_device_mesh("cuda", mesh_shape=(dp_size, tp_size), mesh_dim_names=("dp", "tp"))
+        lora_kwargs = (
+            {"lora_kwargs": {"enable_lora": True, "max_loras": 1, "max_lora_rank": self._lora_rank}}
+            if self._is_lora
+            else {}
+        )
         self.rollout = vLLMRollout(
             model_path=self.config.actor.model.model_path,
             config=self.config.rollout,
             tokenizer=self.tokenizer,
             processor=self.processor,
+            **lora_kwargs,
         )
         self.rollout_sharding_manager = FSDPVLLMShardingManager(
             module=self.fsdp_module,
@@ -388,13 +426,16 @@ class FSDPWorker(Worker):
             )
 
         if self._has_ref:
-            self._build_model_optimizer(
-                model_config=self.config.actor.model,
-                fsdp_config=self.config.ref.fsdp,
-                optim_config=None,
-                padding_free=self.config.ref.padding_free,
-                role="ref",
-            )
+            if self._is_lora:
+                self.ref_fsdp_module = self.fsdp_module
+            else:
+                self._build_model_optimizer(
+                    model_config=self.config.actor.model,
+                    fsdp_config=self.config.ref.fsdp,
+                    optim_config=None,
+                    padding_free=self.config.ref.padding_free,
+                    role="ref",
+                )
 
         if self._has_actor:
             from .actor.dp_actor import DataParallelPPOActor  # lazy import
@@ -624,14 +665,19 @@ class FSDPWorker(Worker):
     def compute_ref_log_probs(self, data: DataProto):
         assert self._has_ref
 
+        # when is_lora is True, we use the actor without lora applied to calculate the log_prob
+        # which is mostly used for ref log_prob calculation
+        adapter_ctx = self.ref_fsdp_module.disable_adapter() if self._is_lora else nullcontext()
+
         self._process_multi_modal_inputs(data)
         data = data.to(torch.cuda.current_device())
 
-        if self._use_ref_param_offload:
+        # the fsdp module is the same as the ref fsdp module when lora is enabled
+        if self._use_ref_param_offload or (self._is_lora and self._use_param_offload):
             load_fsdp_model(self.ref_fsdp_module)
 
         data.meta_info["temperature"] = self.config.rollout.temperature
-        with self.ulysses_sharding_manager:
+        with self.ulysses_sharding_manager, adapter_ctx:
             data = self.ulysses_sharding_manager.preprocess_data(data)
             output = self.ref_policy.compute_log_prob(data=data)
             output = DataProto.from_dict(tensors={"ref_log_probs": output})
@@ -642,7 +688,7 @@ class FSDPWorker(Worker):
         if self.world_size > 1:
             self.ref_fsdp_module._handle.reshard(True)
 
-        if self._use_ref_param_offload:
+        if self._use_ref_param_offload or (self._is_lora and self._use_param_offload):
             offload_fsdp_model(self.ref_fsdp_module)
 
         output = output.to("cpu")

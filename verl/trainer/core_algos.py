@@ -244,6 +244,7 @@ def compute_grpo_passk_outcome_advantage(
 
     """
     scores = token_level_rewards.sum(dim=-1)
+    advantages = torch.zeros_like(scores)
     id2score = defaultdict(list)
     id2indices = defaultdict(list)
 
@@ -258,9 +259,9 @@ def compute_grpo_passk_outcome_advantage(
         topk, topk_idx = torch.topk(rewards, k=2)
         r_max, r_second_max = topk[0], topk[1]
         i_max = id2indices[idx][topk_idx[0]]
-        scores[i_max] = (r_max - r_second_max) / (torch.std(torch.tensor(id2score[idx])) + eps)
+        advantages[i_max] = (r_max - r_second_max) / (torch.std(torch.tensor(id2score[idx])) + eps)
 
-    returns = scores.unsqueeze(-1) * response_mask
+    returns = advantages.unsqueeze(-1) * response_mask
     return returns, returns
 
 
@@ -414,7 +415,9 @@ def compute_policy_loss(
     clip_ratio_low: float,
     clip_ratio_high: float,
     clip_ratio_dual: float,
-    loss_type: Literal["default", "gspo", "gspo_token", "cispo"],
+    tau_positive: float,
+    tau_negative: float,
+    loss_type: Literal["default", "gspo", "gspo_token", "cispo", "sapo"],
     loss_avg_mode: Literal["token", "seq"],
     **kwargs,
 ) -> tuple[torch.Tensor, dict[str, float]]:
@@ -437,6 +440,10 @@ def compute_policy_loss(
             The higher clip range used in DAPO. See https://arxiv.org/pdf/2503.14476
         clip_ratio_dual: (float)
             The dual clip range used in Dual-clip PPO. See https://arxiv.org/pdf/1912.09729
+        tau_positive: (float)
+            The temperature for control the positive tokens' clipping in SAPO. See https://arxiv.org/pdf/2511.20347
+        tau_negative: (float)
+            The temperature for control the negative tokens' clipping in SAPO. See https://arxiv.org/pdf/2511.20347
         loss_avg_mode: (Literal["token", "seq"])
             "token": average the loss in the whole batch
             "seq": average the loss in each sequence then average the mean of the means
@@ -462,7 +469,7 @@ def compute_policy_loss(
         if loss_type == "gspo_token":
             log_importance_ratio = negative_approx_kl_in_seq.detach().unsqueeze(-1) + log_probs - log_probs.detach()
         else:
-            log_importance_ratio = negative_approx_kl_in_seq * response_mask
+            log_importance_ratio = negative_approx_kl_in_seq.unsqueeze(-1) * response_mask
     else:
         log_importance_ratio = negative_approx_kl
 
@@ -480,6 +487,12 @@ def compute_policy_loss(
 
     if loss_type == "cispo":
         final_pg_loss = -advantages * log_probs * clipped_ratio.detach()
+    elif loss_type == "sapo":
+        positive_token_mask =  (advantages >= 0).float()
+        negative_token_mask =  (advantages < 0).float()
+        gate_negative = 4.0 / tau_negative * torch.sigmoid(tau_negative * (ratio - 1.0))
+        gate_positive = 4.0 / tau_positive * torch.sigmoid(tau_positive * (ratio - 1.0))
+        final_pg_loss = -advantages * (positive_token_mask * gate_positive + negative_token_mask * gate_negative)
     else:
         pg_loss = -advantages * ratio  # -ratio * A
         pg_loss2 = -advantages * clipped_ratio  # -clip(ratio, 1-clip_low, 1+clip_high) * A

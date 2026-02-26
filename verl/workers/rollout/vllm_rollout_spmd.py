@@ -22,11 +22,13 @@ import torch.distributed
 from tensordict import TensorDict
 from transformers import PreTrainedTokenizer, ProcessorMixin
 from vllm import LLM, RequestOutput, SamplingParams
+from vllm.lora.request import LoRARequest
 
 from ...protocol import DataProto
 from ...utils import torch_functional as VF
 from ...utils.dataset import process_image, process_video
 from ...utils.torch_dtypes import PrecisionType
+from ...utils.vllm_utils import VLLMHijack
 from .base import BaseRollout
 from .config import RolloutConfig
 
@@ -78,6 +80,7 @@ class vLLMRollout(BaseRollout):
         config: RolloutConfig,
         tokenizer: PreTrainedTokenizer,
         processor: Optional[ProcessorMixin],
+        **kwargs,
     ):
         """A vLLM rollout. It requires the module is supported by the vllm.
 
@@ -97,17 +100,22 @@ class vLLMRollout(BaseRollout):
         if config.max_num_batched_tokens < config.prompt_length + config.response_length:
             raise ValueError("max_num_batched_tokens should be greater than prompt_length + response_length.")
 
+        lora_kwargs = kwargs.pop("lora_kwargs", {})
+        self.lora_kwargs = lora_kwargs
+
         engine_kwargs = {}
         if processor is not None:  # only VLMs have processor
             engine_kwargs["disable_mm_preprocessor_cache"] = True
             if config.limit_images:
                 engine_kwargs["limit_mm_per_prompt"] = {"image": config.limit_images}
 
+        VLLMHijack.hijack()
+
         self.inference_engine = LLM(
             model=model_path,
             skip_tokenizer_init=False,
             trust_remote_code=config.trust_remote_code,
-            load_format="dummy",
+            load_format="dummy" if not self.lora_kwargs else "safetensors",
             dtype=PrecisionType.to_str(PrecisionType.to_dtype(config.dtype)),
             seed=config.seed,
             max_model_len=config.max_model_len or config.prompt_length + config.response_length,
@@ -120,6 +128,7 @@ class vLLMRollout(BaseRollout):
             disable_custom_all_reduce=True,
             enable_chunked_prefill=config.enable_chunked_prefill,
             enable_sleep_mode=True,
+            **lora_kwargs,
             **engine_kwargs,
         )
 
@@ -187,10 +196,22 @@ class vLLMRollout(BaseRollout):
         else:
             vllm_inputs = [{"prompt_token_ids": list(raw_prompt_ids)} for raw_prompt_ids in batch_raw_prompt_ids]
 
+        lora_requests = None
+        if self.lora_kwargs:
+            lora_int_ids = list(self.inference_engine.llm_engine.list_loras())
+            if len(lora_int_ids) > 0:
+                lora_int_id = lora_int_ids[0]
+                lora_requests = [
+                    LoRARequest(lora_name=f"{lora_int_id}", lora_int_id=lora_int_id, lora_path="/simon-stub-path")
+                ] * batch_size
+
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**prompts.meta_info):
             completions: list[RequestOutput] = self.inference_engine.generate(
-                prompts=vllm_inputs, sampling_params=self.sampling_params, use_tqdm=self.use_tqdm
+                prompts=vllm_inputs,
+                sampling_params=self.sampling_params,
+                lora_request=lora_requests,
+                use_tqdm=self.use_tqdm,
             )
             response_ids = [output.token_ids for completion in completions for output in completion.outputs]
             response_ids = VF.pad_2d_list_to_length(

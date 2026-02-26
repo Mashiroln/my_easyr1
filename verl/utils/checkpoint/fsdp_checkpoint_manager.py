@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
+from dataclasses import asdict
 from typing import Optional, Union
 
 import torch
 import torch.distributed as dist
+from peft import PeftModel, get_peft_model_state_dict
+from safetensors.torch import save_file
+from torch.distributed._tensor import DTensor
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
     get_model_state_dict,
@@ -115,9 +120,39 @@ class FSDPCheckpointManager(BaseCheckpointManager):
         if self.rank == 0:
             hf_path = os.path.join(path, "huggingface")
             os.makedirs(hf_path, exist_ok=True)
-            assert isinstance(self.model._fsdp_wrapped_module, PreTrainedModel)
+            assert isinstance(self.model._fsdp_wrapped_module, (PreTrainedModel, PeftModel))
             self.model._fsdp_wrapped_module.config.save_pretrained(hf_path)
             self.model._fsdp_wrapped_module.generation_config.save_pretrained(hf_path)
             self.processing_class.save_pretrained(hf_path)
+
+        if isinstance(self.model._fsdp_wrapped_module, PeftModel):
+            lora_path = os.path.join(path, "lora_adapter")
+            peft_config = {}
+            if self.rank == 0:
+                os.makedirs(lora_path, exist_ok=True)
+                peft_config = asdict(self.model._fsdp_wrapped_module.peft_config.get("default", {}))
+                peft_config["task_type"] = peft_config["task_type"].value
+                peft_config["peft_type"] = peft_config["peft_type"].value
+                peft_config["target_modules"] = list(peft_config["target_modules"])
+
+            sharded_lora_weights = get_peft_model_state_dict(
+                self.model._fsdp_wrapped_module, state_dict=model_state_dict
+            )
+            cuda_device = torch.device("cuda")
+            lora_weights = {
+                name: sharded_weight.to(cuda_device).full_tensor().detach().cpu()
+                if isinstance(sharded_weight, DTensor)
+                else sharded_weight.detach().cpu()
+                for name, sharded_weight in sharded_lora_weights.items()
+            }
+            torch.cuda.empty_cache()
+            if self.rank == 0:
+                save_file(lora_weights, os.path.join(lora_path, "adapter_model.safetensors"))
+                with open(os.path.join(lora_path, "adapter_config.json"), "w", encoding="utf-8") as f:
+                    json.dump(peft_config, f, ensure_ascii=False, indent=4)
+
+            dist.barrier()
+            if self.rank == 0:
+                print(f"[rank-{self.rank}]: Saved LoRA adapter to: {lora_path}")
 
         dist.barrier()

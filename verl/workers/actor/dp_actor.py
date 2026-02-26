@@ -306,6 +306,8 @@ class DataParallelPPOActor(BasePPOActor):
                         clip_ratio_low=self.config.clip_ratio_low,
                         clip_ratio_high=self.config.clip_ratio_high,
                         clip_ratio_dual=self.config.clip_ratio_dual,
+                        tau_positive=self.config.tau_positive,
+                        tau_negative=self.config.tau_negative,
                         loss_type=self.config.loss_type,
                         loss_avg_mode=self.config.loss_avg_mode,
                     )
@@ -329,9 +331,6 @@ class DataParallelPPOActor(BasePPOActor):
 
                     batch_metrics = {f"actor/{k}": v for k, v in pg_metrics.items()}
                     batch_metrics["actor/pg_loss"] = pg_loss.detach().item()
-                    batch_metrics["actor/entropy_output"] = mean_entropy_output.item()
-                    batch_metrics["actor/entropy_answer"] = mean_entropy_answer.item()
-                    batch_metrics["actor/entropy_thinking"] = mean_entropy_thinking.item()
                     append_to_dict(metrics, batch_metrics)
 
                 grad_norm = self._optimizer_step()

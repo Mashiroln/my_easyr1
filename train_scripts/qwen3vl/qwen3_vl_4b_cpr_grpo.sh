@@ -3,10 +3,10 @@
 set -x
 
 # python /mnt/data/ccy/verl/scripts_train/check_gpu.py
-
+export CUDA_VISIBLE_DEVICES=2,3,4,5,6,7
 MODEL_PATH=/mnt/data/ccy/VLA_train/output/Qwen3_VL/4B_navsim_cot_CPR_bs32_stage2_openvit_norm
 data_path=/mnt/data/ccy/EasyR1/data/CPR103k_v4_filter_dynamic_5k
-exp_name=qwen3_vl_4b_cpr_grpo_analysis
+exp_name=qwen3_vl_4b_cpr_grpo_analysis_v3
 
 # Override trajectory stats paths (main + optional syn).
 # export NAVSIM_STAT_PATH=/mnt/data/ccy/EasyR1/verl/utils/reward_score/navsim/trajectory_stats_train.json
@@ -35,7 +35,7 @@ python3 -m verl.trainer.main \
     worker.rollout.n=8 \
     worker.reward.reward_function=${reward_function_path}:compute_score_fast \
     trainer.experiment_name=${exp_name} \
-    trainer.n_gpus_per_node=8 \
+    trainer.n_gpus_per_node=4 \
     trainer.total_epochs=8 \
     trainer.save_freq=20
 

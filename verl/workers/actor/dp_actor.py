@@ -298,6 +298,36 @@ class DataParallelPPOActor(BasePPOActor):
                         mean_entropy_thinking = masked_mean(entropy_est, thinking_mask)
                     # ---------------------------------------------------------------
 
+                    # Build extra kwargs for segment_sapo
+                    extra_kwargs = {}
+                    if self.config.loss_type == "segment_sapo":
+                        # Build segment_mask from <answer>/<answer> token boundaries
+                        # Response format: {"coarse_trajectory":"<answer>...</answer>", ..., "explanation":"...", "future_trajectory":"<answer>...</answer>"}
+                        # Segment 0 (coarse): start → end of first </answer>
+                        # Segment 1 (explanation): after first </answer> → before last <answer>
+                        # Segment 2 (future): last <answer> → end
+                        with torch.no_grad():
+                            seg_mask = torch.full_like(responses, 1, dtype=torch.float)  # default: explanation (segment 1)
+                            for i in range(bsz):
+                                ans_starts = torch.nonzero(responses[i] == ANSWER_START_ID, as_tuple=True)[0]
+                                ans_ends = torch.nonzero(responses[i] == ANSWER_END_ID, as_tuple=True)[0]
+                                # Mark coarse segment (first <answer>...</answer> block and everything before)
+                                if len(ans_ends) > 0:
+                                    first_end = ans_ends[0].item()
+                                    seg_mask[i, :first_end + 1] = 0  # segment 0: coarse
+                                # Mark future segment (last <answer>...</answer> block)
+                                if len(ans_starts) >= 2:
+                                    last_start = ans_starts[-1].item()
+                                    seg_mask[i, last_start:] = 2  # segment 2: future
+                                elif len(ans_starts) == 1 and len(ans_ends) == 0:
+                                    # Fallback: only one <answer> found, no </answer> → treat all as future
+                                    seg_mask[i, :] = 2
+                        extra_kwargs["segment_mask"] = seg_mask
+                        extra_kwargs["tau_coarse"] = self.config.tau_coarse
+                        extra_kwargs["tau_exp"] = self.config.tau_exp
+                        extra_kwargs["tau_future"] = self.config.tau_future
+                        extra_kwargs["neg_ratio"] = self.config.neg_ratio
+
                     pg_loss, pg_metrics = compute_policy_loss(
                         old_log_probs=old_log_probs,
                         log_probs=log_probs,
@@ -310,6 +340,7 @@ class DataParallelPPOActor(BasePPOActor):
                         tau_negative=self.config.tau_negative,
                         loss_type=self.config.loss_type,
                         loss_avg_mode=self.config.loss_avg_mode,
+                        **extra_kwargs,
                     )
                     if self.config.use_kl_loss and "ref_log_probs" in model_inputs:
                         ref_log_probs = model_inputs["ref_log_probs"]
@@ -331,6 +362,9 @@ class DataParallelPPOActor(BasePPOActor):
 
                     batch_metrics = {f"actor/{k}": v for k, v in pg_metrics.items()}
                     batch_metrics["actor/pg_loss"] = pg_loss.detach().item()
+                    batch_metrics["actor/entropy_output"] = mean_entropy_output.item()
+                    batch_metrics["actor/entropy_answer"] = mean_entropy_answer.item()
+                    batch_metrics["actor/entropy_thinking"] = mean_entropy_thinking.item()
                     append_to_dict(metrics, batch_metrics)
 
                 grad_norm = self._optimizer_step()

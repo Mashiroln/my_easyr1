@@ -113,7 +113,7 @@ class ActorConfig:
     loss_avg_mode: str = "token"
     """loss average mode: `token`, `seq`"""
     loss_type: str = "default"
-    """loss type: `default`, `gspo`, `cispo`"""
+    """loss type: `default`, `gspo`, `gspo_token`, `cispo`, `sapo`, `segment_sapo`"""
     ppo_epochs: int = 1
     """number of ppo epochs for each rollout batch"""
     padding_free: bool = True
@@ -125,9 +125,17 @@ class ActorConfig:
     use_torch_compile: bool = True
     """enable torch compile"""
     tau_positive: float = 1.0
-    """temperature for positive tokens"""
+    """temperature for positive tokens (used by sapo)"""
     tau_negative: float = 1.05
-    """temperature for negative tokens"""
+    """temperature for negative tokens (used by sapo)"""
+    tau_coarse: float = 5.0
+    """temperature for coarse segment tokens (used by segment_sapo)"""
+    tau_exp: float = 2.0
+    """temperature for explanation segment tokens (used by segment_sapo)"""
+    tau_future: float = 1.0
+    """temperature for future/refined segment tokens (used by segment_sapo)"""
+    neg_ratio: float = 1.05
+    """multiplier on tau for negative advantage tokens (used by segment_sapo)"""
     model: ModelConfig = field(default_factory=ModelConfig)
     optim: OptimConfig = field(default_factory=OptimConfig)
     fsdp: FSDPConfig = field(default_factory=FSDPConfig)

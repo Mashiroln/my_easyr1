@@ -15,7 +15,7 @@ data:
   format_prompt: ./examples/format_prompt/math.jinja
   override_chat_template: null
   shuffle: true
-  seed: 1
+  seed: 42
   # min_pixels: 262144
   # max_pixels: 4194304
   min_pixels: 65536

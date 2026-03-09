@@ -417,7 +417,7 @@ def compute_policy_loss(
     clip_ratio_dual: float,
     tau_positive: float,
     tau_negative: float,
-    loss_type: Literal["default", "gspo", "gspo_token", "cispo", "sapo"],
+    loss_type: Literal["default", "gspo", "gspo_token", "cispo", "sapo", "segment_sapo"],
     loss_avg_mode: Literal["token", "seq"],
     **kwargs,
 ) -> tuple[torch.Tensor, dict[str, float]]:
@@ -493,6 +493,30 @@ def compute_policy_loss(
         gate_negative = 4.0 / tau_negative * torch.sigmoid(tau_negative * (ratio - 1.0))
         gate_positive = 4.0 / tau_positive * torch.sigmoid(tau_positive * (ratio - 1.0))
         final_pg_loss = -advantages * (positive_token_mask * gate_positive + negative_token_mask * gate_negative)
+    elif loss_type == "segment_sapo":
+        # Segment-Aware SAPO: sigmoid soft gate with two-dimensional tau
+        # Dimension 1 (segment-level): credit-aware regularization based on causal distance to reward
+        # Dimension 2 (advantage sign): negative advantage gradient diffusion correction (from original SAPO)
+        segment_mask = kwargs.get("segment_mask", None)
+        tau_coarse = kwargs.get("tau_coarse", 5.0)
+        tau_exp = kwargs.get("tau_exp", 2.0)
+        tau_future = kwargs.get("tau_future", 1.0)
+        neg_ratio = kwargs.get("neg_ratio", 1.05)
+
+        # Step 1: segment-level base tau
+        if segment_mask is not None:
+            tau_base = torch.where(segment_mask == 0, tau_coarse,
+                        torch.where(segment_mask == 1, tau_exp,
+                                    torch.tensor(tau_future, device=ratio.device, dtype=ratio.dtype)))
+        else:
+            tau_base = torch.full_like(ratio, tau_future)
+
+        # Step 2: negative advantage gets stricter tau (multiply by neg_ratio)
+        tau = torch.where(advantages < 0, tau_base * neg_ratio, tau_base)
+
+        # sigmoid soft gate: f(r) = (4/tau) * sigma(tau * (r - 1))
+        gate = (4.0 / tau) * torch.sigmoid(tau * (ratio - 1.0))
+        final_pg_loss = -advantages * gate
     else:
         pg_loss = -advantages * ratio  # -ratio * A
         pg_loss2 = -advantages * clipped_ratio  # -clip(ratio, 1-clip_low, 1+clip_high) * A

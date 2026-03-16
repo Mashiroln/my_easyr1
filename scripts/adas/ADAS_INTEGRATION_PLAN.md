@@ -152,11 +152,15 @@ checkpoints/adas/${EXP_NAME}/
 
 ---
 
-## Merge 到 dev-local 的改动清单
+## 已完成的 Merge 记录
 
-### 文件分类
+> 私有路径说明：dev 仓库中的硬编码路径（`/mnt/data/ccy/...`）无需清理。
+> 开源版本有独立的目录隔离流程（`scripts/copy_to_opensource.sh`），
+> 本仓库以开发为主，开源为此仓库让步。
 
-**A 类 — 新文件（直接 checkout）**
+### 从 opensource-adas 合并到 dev-local 的文件
+
+**新增文件（from `a2cb7ab`）：**
 
 | 文件 | 说明 |
 |------|------|
@@ -166,7 +170,18 @@ checkpoints/adas/${EXP_NAME}/
 | `scripts/adas/ADAS_INTEGRATION_PLAN.md` | 本文档 |
 | `train_scripts/train_adas_new.sh` | ADAS 训练示例 |
 
-**B 类 — 整文件 checkout（dev-local 侧无冲突）**
+**Pipeline 脚本（from `c7ad6ab`，初始版本，非 `a2cb7ab` 简化版）：**
+
+| 文件 | 说明 |
+|------|------|
+| `scripts/adas/pipeline.py` | 编排：merge → stats → filter |
+| `scripts/adas/compute_stats.py` | 按 token 分组统计 |
+| `scripts/adas/merge_scorer_csv.py` | 合并 scorer CSV → Parquet |
+| `scripts/adas/filter_dynamic.py` | 三阶段筛选 + 输出 .txt token list |
+| `scripts/adas/enrich_prefill.py` | Prefill 元信息注入 |
+| `scripts/adas/run_adas.sh` | 原始筛选示例 |
+
+**整文件 checkout（from `a2cb7ab`）：**
 
 | 文件 | 说明 |
 |------|------|
@@ -174,116 +189,21 @@ checkpoints/adas/${EXP_NAME}/
 | `verl/utils/dataset.py` | RLHFDataset 支持 token_filter_file 过滤 |
 | `verl/trainer/data_loader.py` | create_dataloader 传入 token_filter_file |
 
-**C 类 — 手动加一行（两分支都改了同一文件）**
+**手动编辑（在 dev-local 版本上 patch）：**
 
-| 文件 | 说明 |
+| 文件 | 改动 |
 |------|------|
-| `examples/config_vla.yaml` | dev-local 的 `6c3168e` (segment sapo) 也改了此文件。只需手动加 `token_filter_file: null` |
+| `examples/config_vla.yaml` | 加 `token_filter_file: null` 一行 |
+| `navsim_reward_text.py` | httpx 替换 requests + log dir → `checkpoints/adas/` |
+| `debug/analysis/filter_dynamic_to_csv.py` | 追加 txt 输出（debug 版本也加上） |
 
-**D 类 — 部分合并（只 cherry-pick 特定改动，不 checkout 整文件）**
-
-| 文件 | 要合并的改动 | 不合并的改动 |
-|------|-------------|-------------|
-| `navsim_reward_text.py` | httpx 替换 requests、httpx INFO log 抑制、log dir → `checkpoints/adas/` | 其余开源清理 |
-| `scripts/adas/filter_dynamic.py` | 新增输出 `.txt` 功能 | 其余参数简化 |
-
-**E 类 — 不合并**
+**未合并（仅限 opensource-adas 分支）：**
 
 | 文件 | 原因 |
 |------|------|
-| `helper.py` | syn stats 移除仅限开源 |
-| `navsim_reward_text_rpc.py` | denormalize 签名改动仅限开源 |
-| `pipeline.py` / `compute_stats.py` / `merge_scorer_csv.py` | 重构仅限开源 |
-| `enrich_prefill.py` 删除 | 仅开源版本移除 |
-| `run_adas.sh` 删除 | 仅开源版本移除 |
+| `helper.py` syn stats 移除 | 仅限开源版本 |
+| `navsim_reward_text_rpc.py` denormalize 签名改动 | 仅限开源版本 |
+| Pipeline 脚本的 `a2cb7ab` 简化 | 仅限开源版本 |
+| `enrich_prefill.py` 删除 | 仅限开源版本 |
+| `run_adas.sh` 删除 | 仅限开源版本 |
 | `scripts/copy_to_opensource.sh` | 舍弃 |
-
----
-
-## Git 操作步骤
-
-当前分支状态：
-
-```
-de90f8a (共同祖先)
-  ├── 6c3168e (dev-local HEAD) — segment sapo
-  │     └── stash@{0}: dev-local 未提交的工作
-  └── c7ad6ab (opensource-adas HEAD) — token mask + pipeline
-        └── 未提交: main_adas.py, navsim httpx, 脚本, 开源清理 ...
-```
-
-### Step 0: 在 opensource-adas 上提交快照
-
-```bash
-git add -A
-git commit -m "[feat] ADAS: inference runner + open-source cleanup"
-```
-
-保留开源版本的完整快照，后续不再需要此分支的未提交状态。
-
-### Step 1: 切到 dev-local
-
-```bash
-git checkout dev-local
-```
-
-暂不 pop stash，先合并 ADAS 改动。
-
-### Step 2: Checkout A 类 + B 类文件
-
-```bash
-# A 类：新文件
-git checkout opensource-adas -- verl/trainer/main_adas.py
-git checkout opensource-adas -- scripts/adas/run_adas_infer.sh
-git checkout opensource-adas -- scripts/adas/run_adas_filter.sh
-git checkout opensource-adas -- scripts/adas/ADAS_INTEGRATION_PLAN.md
-git checkout opensource-adas -- train_scripts/train_adas_new.sh
-
-# B 类：整文件（dev-local 侧这些文件自 de90f8a 以来无改动）
-git checkout opensource-adas -- verl/trainer/config.py
-git checkout opensource-adas -- verl/utils/dataset.py
-git checkout opensource-adas -- verl/trainer/data_loader.py
-```
-
-### Step 3: 手动处理 C 类
-
-`examples/config_vla.yaml`：在 `filter_overlong_prompts: true` 下一行加：
-
-```yaml
-  token_filter_file: null
-```
-
-### Step 4: 手动处理 D 类
-
-`navsim_reward_text.py`：在 dev-local 版本上手动应用 3 处改动：
-1. `import requests` → `import httpx` + `logging.getLogger("httpx").setLevel(logging.WARNING)`
-2. `requests.post(...)` → `httpx.Client(trust_env=False, timeout=timeout)` 模式
-3. log 路径从 `debug/` → `checkpoints/adas/${EXP_NAME}/`
-
-`filter_dynamic.py`：在 dev-local 版本上追加输出 `.txt` 的逻辑。
-
-### Step 5: 提交
-
-```bash
-git add verl/trainer/main_adas.py \
-       verl/trainer/config.py \
-       verl/utils/dataset.py \
-       verl/trainer/data_loader.py \
-       examples/config_vla.yaml \
-       verl/utils/reward_score/navsim/navsim_reward_text.py \
-       scripts/adas/run_adas_infer.sh \
-       scripts/adas/run_adas_filter.sh \
-       scripts/adas/ADAS_INTEGRATION_PLAN.md \
-       scripts/adas/filter_dynamic.py \
-       train_scripts/train_adas_new.sh
-
-git commit -m "[feat] ADAS: inference integration + token filter dataloader"
-```
-
-### Step 6: Pop stash
-
-```bash
-git stash pop
-```
-
-如有冲突，手动解决后继续开发。

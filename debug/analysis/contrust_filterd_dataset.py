@@ -5,11 +5,11 @@ import shutil
 
 # --- 1. 请在这里修改您的文件路径 ---
 # 包含原始数据的Hugging Face数据集文件夹路径
-dataset_path = "/mnt/data/ccy/EasyR1/data/p_sn_223kv3_selfnorm_full/"
+dataset_path = "/mnt/data/ccy/EasyR1/data/qwen3vl_4b_prn103kv4_norm_cot_full/"
 # 包含有效token的CSV文件路径
-csv_path = "/mnt/data/ccy/VLA_train/parallel_infer/output/4B_navsim_ps01_120kv3_pn103kv3_selfnorm_stage2/group_stats_filtered_0.1.csv"  # <-- 请修改为您的CSV文件路径
+csv_path = "/mnt/data/ccy/VLA_train/parallel_infer/output/qwen3_vl_4b_ctr_segment_openvit_sapo/group_stats_filtered_0.5.csv"  # <-- 请修改为您的CSV文件路径
 # 新的过滤后数据集的保存路径
-out_name = "p_sn_223kv3_selfnorm_15k"
+out_name = "qwen3vl_4b_prn103kv4_norm_cot_ssapo_adas1x_2k"
 output_path = f"/mnt/data/ccy/EasyR1/data/{out_name}/data/train.parquet" # <-- 请修改为您想保存的路径
 test_output_path = f"/mnt/data/ccy/EasyR1/data/{out_name}/data/test.parquet"
 # --- 2. 从CSV文件中加载tokens ---

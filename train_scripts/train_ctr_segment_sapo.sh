@@ -5,8 +5,8 @@ set -x
 
 # === Model & Data ===
 MODEL_PATH=/mnt/data/ccy/VLA_train/output/Qwen3_VL/4B_navsim_prn103kv4_norm_stage2_pn103kv3_use_refinev4_norm_stage1
-data_path=/mnt/data/ccy/EasyR1/data/qwen3vl_4b_prn103kv4_norm_cot_dynamic3k
-exp_name=qwen3_vl_4b_ctr_segment_openvit_sapo
+data_path=/mnt/data/ccy/EasyR1/data/qwen3vl_4b_prn103kv4_norm_cot_ssapo_adas2x_1_5k
+exp_name=qwen3_vl_4b_ctr_segment_openvit_sapo_3x
 
 # === Environment: reward parsing & stats ===
 export EXP_NAME=${exp_name}
@@ -43,10 +43,11 @@ python3 -m verl.trainer.main \
     worker.actor.tau_future=${TAU_FUTURE} \
     worker.actor.neg_ratio=${NEG_RATIO} \
     worker.rollout.tensor_parallel_size=1 \
-    worker.rollout.n=8 \
+    worker.rollout.n=16 \
     worker.reward.reward_function=${reward_function_path}:compute_score_fast \
     trainer.experiment_name=${exp_name} \
     trainer.n_gpus_per_node=8 \
-    trainer.total_epochs=12 \
+    trainer.total_epochs=100 \
     trainer.save_freq=20 \
-    worker.actor.model.freeze_vision_tower=false
+    worker.actor.model.freeze_vision_tower=false \
+    trainer.load_checkpoint_path=/mnt/data/ccy/EasyR1/checkpoints/easy_r1/qwen3_vl_4b_ctr_segment_openvit_sapo_2x/global_step_120

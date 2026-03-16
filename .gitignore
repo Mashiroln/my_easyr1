@@ -192,3 +192,6 @@ debug/**
 !debug/**/
 !debug/**/*.py
 !debug/**/*.sh
+
+
+scripts/mv_checkpoints.py

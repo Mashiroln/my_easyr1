@@ -366,8 +366,13 @@ class RayPPOTrainer:
 
         dataloader_path = os.path.join(load_checkpoint_path, "dataloader.pt")
         if os.path.exists(dataloader_path):
-            dataloader_state_dict = torch.load(dataloader_path, weights_only=False)
-            self.train_dataloader.load_state_dict(dataloader_state_dict)
+            try:
+                dataloader_state_dict = torch.load(dataloader_path, weights_only=False)
+                self.train_dataloader.load_state_dict(dataloader_state_dict)
+                print(f"Dataloader state restored from {dataloader_path}.")
+            except (StopIteration, RuntimeError, ValueError) as e:
+                print(f"Warning: Failed to restore dataloader state ({e}). "
+                      "This is expected when resuming with a different dataset. Starting dataloader from scratch.")
         else:
             print(f"No dataloader state found at {dataloader_path}, will start from scratch.")
 

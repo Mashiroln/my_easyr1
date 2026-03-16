@@ -207,3 +207,15 @@ checkpoints/adas/${EXP_NAME}/
 | `enrich_prefill.py` 删除 | 仅限开源版本 |
 | `run_adas.sh` 删除 | 仅限开源版本 |
 | `scripts/copy_to_opensource.sh` | 舍弃 |
+
+---
+
+## Git Commit 记录
+
+合并操作在 `dev-local` 分支上产生了以下 commit：
+
+| Commit | 说明 |
+|--------|------|
+| `8099c59` | [feat] ADAS: inference integration + token filter dataloader — 主体合并：`main_adas.py`、`config.py`、`dataset.py`、`data_loader.py`、`config_vla.yaml`、`navsim_reward_text.py`（httpx + log dir）、示例脚本、本文档 |
+| `5bdc76b` | [fix] add missing scripts/adas/ pipeline scripts from c7ad6ab — 补充 `run_adas_filter.sh` 依赖的 pipeline 脚本（`pipeline.py`、`compute_stats.py`、`merge_scorer_csv.py`、`filter_dynamic.py`、`enrich_prefill.py`、`run_adas.sh`） |
+| `70abe50` | [docs] update ADAS plan: fix merge record + private path policy — 修正合并记录表格，添加私有路径说明 |

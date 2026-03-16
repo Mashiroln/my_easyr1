@@ -84,6 +84,20 @@ def process_video(
     return fetch_video(vision_info, return_video_sample_fps=return_fps)
 
 
+def _load_token_filter_set(token_filter_file: str) -> set:
+    """Load a set of scenario tokens from a text file for ADAS filtering.
+
+    Supports single-column (one token per line) and tab-separated (token\\textra) formats.
+    """
+    tokens = set()
+    with open(token_filter_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                tokens.add(line.split("\t")[0])
+    return tokens
+
+
 class RLHFDataset(Dataset):
     """
     We assume the dataset contains a column that contains prompts and other information
@@ -107,6 +121,7 @@ class RLHFDataset(Dataset):
         max_pixels: Optional[int] = None,
         filter_overlong_prompts: bool = True,
         filter_overlong_prompts_workers: int = 16,
+        token_filter_file: Optional[str] = None,
     ):
         self.tokenizer = tokenizer
         self.processor = processor
@@ -125,7 +140,7 @@ class RLHFDataset(Dataset):
             data_path, data_split = data_path.split("@")
         else:
             data_split = "train"
-            
+
         self.dataset = load_dataset(data_path, split=data_split)
 
         # if os.path.isdir(data_path):
@@ -138,6 +153,18 @@ class RLHFDataset(Dataset):
         # else:
         #     # load remote dataset from huggingface hub
         #     self.dataset = load_dataset(data_path, split=data_split)
+
+        if token_filter_file is not None:
+            token_set = _load_token_filter_set(token_filter_file)
+            orig_len = len(self.dataset)
+            answer_key = self.answer_key
+            self.dataset = self.dataset.filter(
+                lambda example: example[answer_key]["token"] in token_set,
+                desc="Filtering by token list",
+                num_proc=filter_overlong_prompts_workers,
+            )
+            print(f"Token filter: {orig_len} -> {len(self.dataset)} samples "
+                  f"({len(token_set)} tokens in filter file)")
 
         self.format_prompt = None
         if format_prompt:

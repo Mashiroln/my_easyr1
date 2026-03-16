@@ -21,6 +21,7 @@ data:
   min_pixels: 65536
   max_pixels: 262144
   filter_overlong_prompts: true
+  token_filter_file: null
 
 algorithm:
   adv_estimator: grpo

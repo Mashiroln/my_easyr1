@@ -55,11 +55,13 @@ class DataConfig:
     max_pixels: Optional[int] = 4194304
     filter_overlong_prompts: bool = True
     filter_overlong_prompts_workers: int = 16
+    token_filter_file: Optional[str] = None
 
     def post_init(self):
         self.image_dir = get_abs_path(self.image_dir, prompt="Image directory")
         self.format_prompt = get_abs_path(self.format_prompt, prompt="Format prompt file")
         self.override_chat_template = get_abs_path(self.override_chat_template, prompt="Chat template file")
+        self.token_filter_file = get_abs_path(self.token_filter_file, prompt="Token filter file")
 
 
 @dataclass

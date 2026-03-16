@@ -81,3 +81,10 @@ final_csv_output = final_df[output_columns].to_csv(index=False)
 with open(csv_out_path, "w") as f_out:
     f_out.write(final_csv_output)
 print("Saved filtered results to:", csv_out_path)
+
+# Write token list txt (for data.token_filter_file)
+txt_out_path = csv_out_path.replace(".csv", ".txt")
+with open(txt_out_path, "w") as f_out:
+    for token in final_df["token"]:
+        f_out.write(f"{token}\n")
+print(f"Token list: {txt_out_path}  ({len(final_df)} entries)")

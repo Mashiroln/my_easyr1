@@ -1,5 +1,5 @@
 import os
-import requests
+import httpx
 import re
 import json
 import threading
@@ -23,13 +23,16 @@ from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 REWARD_NAME = "navsim_span_grpo"
 REWARD_TYPE = "batch"
 
 time_str = datetime.now().strftime("%m%d%H%M")
 exp_name = os.environ.get("EXP_NAME", "default_exp")
-log_file_path = f"/mnt/data/ccy/EasyR1/debug/analysis/generations_{exp_name}_{time_str}.jsonl"
+_adas_log_dir = os.path.join("checkpoints", "adas", exp_name)
+os.makedirs(_adas_log_dir, exist_ok=True)
+log_file_path = os.path.join(_adas_log_dir, f"generations_{time_str}.jsonl")
 log_lock = threading.Lock()
 
 def log_to_jsonl(data: dict, file_path: str):
@@ -90,7 +93,8 @@ def simulator_reward(token: str, poses: list[list[float]], verbose: bool):
 
     for attempt in range(1, retries + 1):
         try:
-            resp = requests.post(random.choice(url_pool), data=json.dumps(payload), headers=headers, timeout=timeout)
+            with httpx.Client(trust_env=False, timeout=timeout) as client:
+                resp = client.post(random.choice(url_pool), content=json.dumps(payload), headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
                 pdms = data["pdms"]
@@ -98,8 +102,8 @@ def simulator_reward(token: str, poses: list[list[float]], verbose: bool):
                 return pdms, scaled_pdms
             else:
                 logger.warning(f"[WARN] server error code: {resp.status_code}, try again {attempt}/{retries}")
-        except requests.exceptions.RequestException as e:
-            print(f"[ERROR] request errer {e}, after tries {attempt}/{retries}")
+        except httpx.HTTPError as e:
+            print(f"[ERROR] request error {e}, after tries {attempt}/{retries}")
             if attempt == retries: return 0.0, 0.0
 
 def step_length_reward(indices, ground_truth):
@@ -307,8 +311,9 @@ def simulator_reward_batch(token: str, all_poses: List[List[List[float]]], verbo
 
     for attempt in range(1, retries + 1):
         try:
-            resp = requests.post(random.choice(url_pool_group), data=json.dumps(payload), headers=headers, timeout=timeout)
-            
+            with httpx.Client(trust_env=False, timeout=timeout) as client:
+                resp = client.post(random.choice(url_pool_group), content=json.dumps(payload), headers=headers)
+
             if resp.status_code == 200:
                 data = resp.json()
                 # 关键假设：我们假设 /score_same 返回一个结果列表
@@ -332,7 +337,7 @@ def simulator_reward_batch(token: str, all_poses: List[List[List[float]]], verbo
             else:
                 print(f"[WARN] server error code: {resp.status_code}, try again {attempt}/{retries} for token {token}")
                 
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             print(f"[ERROR] request error {e}, after tries {attempt}/{retries} for token {token}")
     
     # 所有重试失败

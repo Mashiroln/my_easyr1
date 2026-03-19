@@ -57,13 +57,15 @@ class SequentialFunctionRewardManagerMixin:
             response_str = self.tokenizer.decode(
                 valid_response_ids, skip_special_tokens=self.config.skip_special_tokens
             )
-            score = self.reward_fn(
-                {
-                    "response": response_str,
-                    "response_length": cur_response_length,
-                    "ground_truth": data.non_tensor_batch["ground_truth"][i],
-                }
-            )
+            reward_input = {
+                "response": response_str,
+                "response_length": cur_response_length,
+                "ground_truth": data.non_tensor_batch["ground_truth"][i],
+            }
+            for extra_key in ("token", "is_prefill", "prefill_trajectory", "prefill_score", "pool_type"):
+                if extra_key in data.non_tensor_batch:
+                    reward_input[extra_key] = data.non_tensor_batch[extra_key][i]
+            score = self.reward_fn(reward_input)
             reward_tensor[i, cur_response_length - 1] = score["overall"]
             for key, value in score.items():
                 reward_metrics[key].append(value)
@@ -84,13 +86,16 @@ class BatchFunctionRewardManagerMixin:
             response_str = self.tokenizer.decode(
                 valid_response_ids, skip_special_tokens=self.config.skip_special_tokens
             )
-            reward_inputs.append(
-                {
-                    "response": response_str,
-                    "response_length": cur_response_length,
-                    "ground_truth": data.non_tensor_batch["ground_truth"][i],
-                }
-            )
+            reward_input = {
+                "response": response_str,
+                "response_length": cur_response_length,
+                "ground_truth": data.non_tensor_batch["ground_truth"][i],
+            }
+            # Pass through prefill metadata when available
+            for extra_key in ("token", "is_prefill", "prefill_trajectory", "prefill_score", "pool_type"):
+                if extra_key in data.non_tensor_batch:
+                    reward_input[extra_key] = data.non_tensor_batch[extra_key][i]
+            reward_inputs.append(reward_input)
 
         scores = self.reward_fn(reward_inputs)
         reward_tensor = torch.zeros_like(data.batch["responses"], dtype=torch.float32)

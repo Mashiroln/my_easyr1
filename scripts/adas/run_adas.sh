@@ -17,14 +17,12 @@ cd "$(dirname "$0")"
 
 # ====== Configuration ======
 INFER_FOLDER="/path/to/parallel_infer/output/your_experiment"
-CSV_MODE="no_prefill"           # "all" | "prefill" | "no_prefill"
 TARGET_MIN=3000
 TARGET_MAX=6000
 # ===========================
 
 python pipeline.py \
     --infer_folder "$INFER_FOLDER" \
-    --csv_mode "$CSV_MODE" \
     --target_min "$TARGET_MIN" \
     --target_max "$TARGET_MAX"
 

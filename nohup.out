@@ -1,0 +1,24 @@
+/mnt/data/miniconda3/envs/verl/lib/python3.10/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[VLLM Guard] PID=3098028, holding ~1MB on cuda:0
+[VLLM Guard] Ctrl+C to stop
+Traceback (most recent call last):
+  File "/mnt/data/ccy/vllm_guard.py", line 19, in <module>
+    time.sleep(60)
+KeyboardInterrupt
+/mnt/data/miniconda3/envs/verl/lib/python3.10/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[VLLM Guard] PID=3131202, holding ~1MB on cuda:0
+[VLLM Guard] Ctrl+C to stop
+Traceback (most recent call last):
+  File "/mnt/data/ccy/vllm_guard.py", line 19, in <module>
+    time.sleep(60)
+KeyboardInterrupt
+/mnt/data/miniconda3/envs/verl/lib/python3.10/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Traceback (most recent call last):
+  File "/mnt/data/ccy/vllm_guard.py", line 14, in <module>
+    dummy = torch.zeros(256, 1024, device="cuda:0")  # ~1MB
+  File "/mnt/data/miniconda3/envs/verl/lib/python3.10/site-packages/torch/cuda/__init__.py", line 412, in _lazy_init
+    torch._C._cuda_init()
+KeyboardInterrupt

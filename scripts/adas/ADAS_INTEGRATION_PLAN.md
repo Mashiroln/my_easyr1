@@ -73,20 +73,32 @@ INFER_FOLDER="../../checkpoints/adas/${EXP_NAME}"
 
 python pipeline.py \
     --infer_folder "$INFER_FOLDER" \
+    --csv_mode prefill \
     -p 0.2 \
     --conf 0.1
 ```
 
-Pipeline 内部流程：
+Pipeline 内部流程（3 步）：
 
 ```
-adas_scores.csv
-    ↓ merge_scorer_csv    → generations_full.parquet
-    ↓ compute_stats       → group_stats.csv
-    ↓ filter_dynamic      → group_stats_filtered_<p>.txt
+scorer CSV(s)
+    ↓ merge_scorer_csv    → generations_full_<mode>.parquet
+    ↓ compute_stats       → generations_full_<mode>.csv
+    ↓ filter_dynamic      → generations_full_<mode>_filtered_<p>.{csv,txt,jsonl}
 ```
 
-**输出**：`checkpoints/adas/${EXP_NAME}/group_stats_filtered_<p>.txt`
+- `--csv_mode standard`（默认）：排除文件名含 "prefill" 的 scorer CSV
+- `--csv_mode prefill`：只选取文件名含 "prefill" 的 scorer CSV
+
+输出文件通过 `_prefill` 后缀区分，标准模式无后缀。
+
+**Normalization 透明**：Pipeline 全程只传递 denorm 原始轨迹（`coarse_center`），
+不做任何 normalize/denormalize 变换。所有 norm 逻辑封装在 dataloader 的
+`TrajectoryNormalizer.format_prefill_text()` 中，对 pipeline 完全透明。
+
+**prefill 模式**：`filter_dynamic` 直接从 `prefill_meta.jsonl` + `centers_jsonl`
+加载 denorm center（仅加载 filtered rows 需要的），写入 `.jsonl` filter spec。
+不需要 enrich 中间步骤。
 
 `-p` 和 `--conf` 参数可手动调整后重跑，无需重新推理。
 
@@ -95,22 +107,40 @@ adas_scores.csv
 ## Step 3: 训练
 
 ```bash
+# 单文件：Prefill 模式（使用 .jsonl，包含 coarse_center）
 python -m verl.trainer.main \
     config=examples/config_vla.yaml \
     data.train_files=${FULL_DATA}@train \
     data.val_files=${FULL_DATA}@test \
     data.format_prompt=null \
     data.max_response_length=3072 \
-    data.token_filter_file=checkpoints/adas/${EXP_NAME}/group_stats_filtered_0.2.txt \
+    data.token_filter_file=${INFER_FOLDER}/generations_full_prefill_filtered_0.2.jsonl \
     worker.actor.model.model_path=${MODEL_PATH} \
     worker.rollout.n=8 \
     worker.reward.reward_function=${REWARD_FN}:compute_score_fast \
     trainer.experiment_name=${EXP_NAME}_train \
     trainer.n_gpus_per_node=8 \
     trainer.total_epochs=8
+
+# 单文件：No-prefill 模式（使用 .txt）
+#   data.token_filter_file=${INFER_FOLDER}/generations_full_filtered_0.2.txt
+
+# 多文件混合：Prefill + No-prefill（dataloader 自动检测每个 entry 是否有 coarse_center）
+#   data.token_filter_file=[${INFER_FOLDER}/generations_full_prefill_filtered_0.2.jsonl,${INFER_FOLDER}/generations_full_filtered_0.15.txt]
 ```
 
-> 完整示例见 `train_scripts/train_adas_new.sh`
+**多文件混合说明**：
+- `token_filter_file` 接受 list（YAML list 语法：`[file1,file2,...]`）
+- Dataloader 逐个读取，自动检测每个 entry 是否有 `coarse_center` 字段
+- 有 `coarse_center` → prefill sample（normalize → format → 注入 prompt 末尾）
+- 无 `coarse_center` → base sample（不注入）
+- 支持任意组合：纯 prefill、纯 base、或混合
+- Dataloader 的 shuffle 在混合后的完整 sample list 上执行
+
+**文件格式**：
+- `.jsonl`（prefill）：每行 `{"token": "...", "coarse_center": [[x,y,z], ...]}`
+- `.jsonl`（no prefill）：每行 `{"token": "..."}`（无 `coarse_center` 字段）
+- `.txt`（legacy）：每行一个 token（等价于 no prefill）
 
 ---
 
@@ -131,12 +161,19 @@ Round 3: ...
 ## 输出目录结构
 
 ```
-checkpoints/adas/${EXP_NAME}/
-├── generations_<timestamp>.jsonl     ← reward function 自动 log
-├── adas_scores.csv                   ← main_adas.py 输出
-├── generations_full.parquet          ← pipeline Step 1 (merge)
-├── generations_full.csv              ← pipeline Step 2 (group stats)
-└── group_stats_filtered_<p>.txt      ← pipeline Step 3 (token filter)
+${INFER_FOLDER}/
+├── *_result_*.csv                                ← 原始 scorer CSV
+├── *.prefill_meta.jsonl                          ← prefill 元数据（含 centers 路径）
+├── generations_full.parquet                            ← Step 1 (merge, standard mode)
+├── generations_full.csv                                ← Step 2 (group stats)
+├── generations_full_filtered_<p>.csv                   ← Step 3 (filtered stats)
+├── generations_full_filtered_<p>.txt                   ← Step 3 (token list)
+├── generations_full_filtered_<p>.jsonl                 ← Step 3 (filter spec)
+├── generations_full_prefill.parquet                    ← Step 1 (merge, prefill mode)
+├── generations_full_prefill.csv                        ← Step 2 (group stats)
+├── generations_full_prefill_filtered_<p>.csv           ← Step 3 (filtered stats)
+├── generations_full_prefill_filtered_<p>.txt           ← Step 3 (token list, legacy)
+└── generations_full_prefill_filtered_<p>.jsonl         ← Step 3 (filter spec with coarse_center)
 ```
 
 ---
@@ -145,10 +182,11 @@ checkpoints/adas/${EXP_NAME}/
 
 | 场景 | 兼容 |
 |------|------|
-| main_adas CSV → run_adas_filter.sh | 直接兼容，`merge_scorer_csv` 自动发现 |
-| 手工 scorer CSV → run_adas_filter.sh | 原有流程不变 |
-| 两者混放同一目录 | `_align_columns` 自动对齐缺失列 |
-| CSV → compute_stats.py | `token, pdms, pdms_scaled` 命中优先路径 |
+| 单个 prefill jsonl | `token_filter_file=path/to/prefill.jsonl` |
+| 单个 no-prefill txt/jsonl | `token_filter_file=path/to/base.txt` |
+| 多文件混合 | `token_filter_file=[prefill.jsonl,base.jsonl]` |
+| Dataloader 自动检测 | 每个 entry 根据 `coarse_center` 字段自动判断 prefill/base |
+| Pipeline 不生成 mix | Pipeline 只生成 standard 和 prefill 各自的输出，用户自己组合 |
 
 ---
 
@@ -177,8 +215,8 @@ checkpoints/adas/${EXP_NAME}/
 | `scripts/adas/pipeline.py` | 编排：merge → stats → filter |
 | `scripts/adas/compute_stats.py` | 按 token 分组统计 |
 | `scripts/adas/merge_scorer_csv.py` | 合并 scorer CSV → Parquet |
-| `scripts/adas/filter_dynamic.py` | 三阶段筛选 + 输出 .txt token list |
-| `scripts/adas/enrich_prefill.py` | Prefill 元信息注入 |
+| `scripts/adas/filter_dynamic.py` | 三阶段筛选 + 输出 .txt/.jsonl（直接从 prefill_meta 加载 denorm center，不依赖 enrich） |
+| `scripts/adas/enrich_prefill.py` | 保留但 pipeline 不再调用（独立工具） |
 | `scripts/adas/run_adas.sh` | 原始筛选示例 |
 
 **整文件 checkout（from `a2cb7ab`）：**

@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import math
 import os
 from collections import defaultdict
+from dataclasses import dataclass
 from io import BytesIO
-from typing import Any, Optional, Union
+from typing import Any, List, Optional, Union
 
 import numpy as np
 import torch
@@ -84,18 +86,51 @@ def process_video(
     return fetch_video(vision_info, return_video_sample_fps=return_fps)
 
 
-def _load_token_filter_set(token_filter_file: str) -> set:
-    """Load a set of scenario tokens from a text file for ADAS filtering.
+@dataclass
+class FilterEntry:
+    """One training sample in the filter spec.
 
-    Supports single-column (one token per line) and tab-separated (token\\textra) formats.
+    ``coarse_center`` is an 8x3 denorm trajectory (or None for base samples).
     """
-    tokens = set()
-    with open(token_filter_file, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                tokens.add(line.split("\t")[0])
-    return tokens
+    token: str
+    coarse_center: Optional[List[List[float]]] = None
+
+
+def _load_filter_spec(paths: str | list[str]) -> list[FilterEntry]:
+    """Load filter spec from JSONL (new) or TXT (legacy), auto-detected.
+
+    Args:
+        paths: Single path or list of paths to filter files.
+
+    Returns:
+        List of FilterEntry. Duplicates are kept (user controls via file order).
+    """
+    if isinstance(paths, str):
+        paths = [paths]
+
+    all_entries = []
+    for path in paths:
+        with open(path, "r", encoding="utf-8") as f:
+            first = f.readline().strip()
+            f.seek(0)
+            if first.startswith("{"):
+                # JSONL format
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    obj = json.loads(line)
+                    all_entries.append(FilterEntry(
+                        token=obj["token"],
+                        coarse_center=obj.get("coarse_center"),
+                    ))
+            else:
+                # Legacy TXT format (one token per line, optional tab-separated extra)
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        all_entries.append(FilterEntry(token=line.split("\t")[0]))
+    return all_entries
 
 
 class RLHFDataset(Dataset):
@@ -121,7 +156,7 @@ class RLHFDataset(Dataset):
         max_pixels: Optional[int] = None,
         filter_overlong_prompts: bool = True,
         filter_overlong_prompts_workers: int = 16,
-        token_filter_file: Optional[str] = None,
+        token_filter_file: Optional[list[str]] = None,
     ):
         self.tokenizer = tokenizer
         self.processor = processor
@@ -141,21 +176,24 @@ class RLHFDataset(Dataset):
         else:
             data_split = "train"
 
-        self.dataset = load_dataset(data_path, split=data_split)
+        # Robust local parquet loading: detect local directory with data/<split>.parquet
+        local_parquet = os.path.join(data_path, "data", f"{data_split}.parquet")
+        if os.path.isdir(data_path) and os.path.isfile(local_parquet):
+            self.dataset = load_dataset("parquet", data_files=local_parquet, split="train")
+            print(f"Loaded local parquet: {local_parquet} ({len(self.dataset)} rows)")
+        else:
+            self.dataset = load_dataset(data_path, split=data_split)
 
-        # if os.path.isdir(data_path):
-        #     # when we use dataset builder, we should always refer to the train split
-        #     file_type = os.path.splitext(os.listdir(data_path)[0])[-1][1:].replace("jsonl", "json")
-        #     self.dataset = load_dataset(file_type, data_dir=data_path, split=data_split)
-        # elif os.path.isfile(data_path):
-        #     file_type = os.path.splitext(data_path)[-1][1:].replace("jsonl", "json")
-        #     self.dataset = load_dataset(file_type, data_files=data_path, split=data_split)
-        # else:
-        #     # load remote dataset from huggingface hub
-        #     self.dataset = load_dataset(data_path, split=data_split)
+        # Prefill state (populated below if filter spec has coarse_center entries)
+        self._sample_entries = None
+        self._traj_normalizer = None
+
+        filter_entries = None
+        n_prefill = 0
 
         if token_filter_file is not None:
-            token_set = _load_token_filter_set(token_filter_file)
+            filter_entries = _load_filter_spec(token_filter_file)
+            token_set = {e.token for e in filter_entries}
             orig_len = len(self.dataset)
             answer_key = self.answer_key
             self.dataset = self.dataset.filter(
@@ -163,8 +201,14 @@ class RLHFDataset(Dataset):
                 desc="Filtering by token list",
                 num_proc=filter_overlong_prompts_workers,
             )
-            print(f"Token filter: {orig_len} -> {len(self.dataset)} samples "
-                  f"({len(token_set)} tokens in filter file)")
+
+            # Count prefill vs base samples
+            n_prefill = sum(1 for e in filter_entries if e.coarse_center is not None)
+            n_base = len(filter_entries) - n_prefill
+            filter_files = token_filter_file if isinstance(token_filter_file, list) else [token_filter_file]
+            print(f"Token filter: {orig_len} -> {len(self.dataset)} unique tokens "
+                  f"({len(filter_entries)} entries from {len(filter_files)} file(s): "
+                  f"{n_prefill} prefill + {n_base} base)")
 
         self.format_prompt = None
         if format_prompt:
@@ -177,6 +221,24 @@ class RLHFDataset(Dataset):
                 desc="Filtering overlong prompts",
                 num_proc=filter_overlong_prompts_workers,
             )
+
+        # Build _sample_entries AFTER overlong filter so dataset indices are stable
+        if token_filter_file is not None and n_prefill > 0:
+            answer_key = self.answer_key
+            token_to_idx = {}
+            for i in range(len(self.dataset)):
+                token_to_idx[self.dataset[i][answer_key]["token"]] = i
+
+            self._sample_entries = [
+                (token_to_idx[e.token], e.coarse_center)
+                for e in filter_entries if e.token in token_to_idx
+            ]
+
+            from verl.utils.trajectory_normalizer import TrajectoryNormalizer
+            self._traj_normalizer = TrajectoryNormalizer()
+            n_prefill_final = sum(1 for _, c in self._sample_entries if c is not None)
+            n_base_final = len(self._sample_entries) - n_prefill_final
+            print(f"Sample entries built: {n_prefill_final} prefill + {n_base_final} base = {len(self._sample_entries)} total")
 
     def _build_messages(self, example: dict[str, Any]) -> list[dict[str, Any]]:
         prompt_str: str = example[self.prompt_key]
@@ -241,10 +303,17 @@ class RLHFDataset(Dataset):
             return len(input_ids) <= self.max_prompt_length
 
     def __len__(self):
+        if self._sample_entries is not None:
+            return len(self._sample_entries)
         return len(self.dataset)
 
     def __getitem__(self, index):
-        example: dict = self.dataset[index]
+        if self._sample_entries is not None:
+            dataset_idx, coarse_center = self._sample_entries[index]
+            example: dict = dict(self.dataset[dataset_idx])
+        else:
+            coarse_center = None
+            example: dict = self.dataset[index]
         messages = self._build_messages(example)
         example.pop(self.prompt_key, None)
 
@@ -322,6 +391,19 @@ class RLHFDataset(Dataset):
             truncation=self.truncation,
         )
         raw_prompt_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
+
+        # Prefill injection: denorm center → normalize → format → tokenize → append
+        if coarse_center is not None:
+            token_str = example.get(self.answer_key, {}).get("token")
+            prefill_text = self._traj_normalizer.format_prefill_text(
+                coarse_center, token=token_str,
+            )
+            prefill_ids = self.tokenizer.encode(prefill_text, add_special_tokens=False)
+            raw_prompt_ids = raw_prompt_ids + prefill_ids
+            example["is_prefill"] = True
+        else:
+            example["is_prefill"] = False
+
         if len(raw_prompt_ids) > self.max_prompt_length:
             if self.truncation == "left":
                 raw_prompt_ids = raw_prompt_ids[-self.max_prompt_length :]

@@ -178,45 +178,15 @@ def parse_cpr_text_waypoint(output_text: str) -> List[List[float]]:
     return result
 
 # ------------------------------
-# Stats paths (configurable)
+# Stats: delegate to shared TrajectoryNormalizer
 # ------------------------------
-# Training scripts can override these via env vars:
-# - NAVSIM_STAT_PATH
-# - NAVSIM_STAT_PATH_SYN
-_DEFAULT_STAT_PATH = "/mnt/data/ccy/EasyR1/verl/utils/reward_score/navsim/trajectory_stats_train.json"
+from verl.utils.trajectory_normalizer import TrajectoryNormalizer
 
-stat_path = os.environ.get("NAVSIM_STAT_PATH", _DEFAULT_STAT_PATH)
-stat_path_syn_env = os.environ.get("NAVSIM_STAT_PATH_SYN", "").strip()
-stat_path_syn = stat_path_syn_env if stat_path_syn_env else None
-
-
-def _load_stats(path: str) -> Tuple[np.ndarray, np.ndarray]:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return np.array(data["mean"]), np.array(data["std"])
-
-
-global means, stds, means_syn, stds_syn
-means, stds = _load_stats(stat_path)
-if stat_path_syn:
-    means_syn, stds_syn = _load_stats(stat_path_syn)
-else:
-    means_syn, stds_syn = means, stds
-
-
-_SYN_TOKEN_RE = re.compile(r"-00\d$")
-
-
-def _use_syn_stats(token: Optional[str]) -> bool:
-    return bool(token) and bool(_SYN_TOKEN_RE.search(str(token)))
+_normalizer = TrajectoryNormalizer()
 
 
 def denormalize(poses: List[List[float]], token: Optional[str] = None) -> List[List[float]]:
-    use_syn = _use_syn_stats(token)
-    # print(f"Denormalizing poses for token={token} using {'synthetic' if use_syn else 'train'} stats.")
-    m, s = (means_syn, stds_syn) if use_syn else (means, stds)
-    result = np.array(poses) * s + m
-    return result.tolist()
+    return _normalizer.denormalize(poses, token=token).tolist()
 
 
 # ------------------------------

@@ -55,13 +55,23 @@ class DataConfig:
     max_pixels: Optional[int] = 4194304
     filter_overlong_prompts: bool = True
     filter_overlong_prompts_workers: int = 16
-    token_filter_file: Optional[str] = None
+    token_filter_file: Optional[list[str]] = None
 
     def post_init(self):
         self.image_dir = get_abs_path(self.image_dir, prompt="Image directory")
         self.format_prompt = get_abs_path(self.format_prompt, prompt="Format prompt file")
         self.override_chat_template = get_abs_path(self.override_chat_template, prompt="Chat template file")
-        self.token_filter_file = get_abs_path(self.token_filter_file, prompt="Token filter file")
+
+        # Handle token_filter_file: convert single str to list if needed
+        if self.token_filter_file is not None:
+            if isinstance(self.token_filter_file, str):
+                # Single file: convert to list with one element
+                self.token_filter_file = [get_abs_path(self.token_filter_file, prompt="Token filter file")]
+            elif isinstance(self.token_filter_file, list):
+                self.token_filter_file = [
+                    get_abs_path(f, prompt=f"Token filter file {i+1}")
+                    for i, f in enumerate(self.token_filter_file)
+                ]
 
 
 @dataclass

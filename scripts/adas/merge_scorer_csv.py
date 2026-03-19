@@ -36,8 +36,9 @@ def main(
     Args:
         folder_path: directory containing one-trajectory-per-row scorer CSVs.
         output_parquet: output path. Auto-named if None.
-        csv_mode: ``"all"`` | ``"prefill"`` | ``"no_prefill"`` – filter CSVs by
-            whether the filename contains *prefill*.
+        csv_mode: ``"standard"`` (default) excludes prefill CSVs;
+            ``"prefill"`` selects only prefill CSVs.
+            Legacy aliases ``"all"`` and ``"no_prefill"`` map to ``"standard"``.
         include_glob / exclude_glob: optional filename globs applied to basename.
         include_bak: keep ``*_bak.csv`` files (default: skip).
         chunksize: rows per pandas chunk when streaming CSVs.
@@ -46,8 +47,12 @@ def main(
     Returns:
         Absolute path to the written Parquet file.
     """
+    # Normalize legacy mode names
+    if csv_mode in ("all", "no_prefill"):
+        csv_mode = "standard"
+
     if output_parquet is None:
-        suffix = "" if csv_mode == "all" else f"_{csv_mode}"
+        suffix = "_prefill" if csv_mode == "prefill" else ""
         output_parquet = os.path.join(folder_path, f"generations_full{suffix}.parquet")
 
     file_paths = [Path(folder_path) / f for f in os.listdir(folder_path)]
@@ -61,7 +66,7 @@ def main(
         lower = name.lower()
 
         # Skip pipeline-generated intermediate files
-        if lower.endswith(".tmp_filtered.csv") or ".tmp_filtered." in lower:
+        if lower.endswith(".tmp_filtered.csv") or ".tmp_filtered." in lower or lower.startswith("tmp_filtered"):
             return False
         if lower.startswith("group_stats") or "group_stats" in lower:
             return False
@@ -73,7 +78,7 @@ def main(
 
         if csv_mode == "prefill" and not _is_prefill_csv(p):
             return False
-        if csv_mode == "no_prefill" and _is_prefill_csv(p):
+        if csv_mode == "standard" and _is_prefill_csv(p):
             return False
 
         if include_glob and not fnmatch.fnmatch(name, include_glob):
@@ -180,7 +185,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Merge scorer CSVs into Parquet")
     parser.add_argument("--folder_path", type=str, required=True)
     parser.add_argument("--output_parquet", type=str, default=None)
-    parser.add_argument("--csv_mode", type=str, default="all", choices=["all", "prefill", "no_prefill"])
+    parser.add_argument("--csv_mode", type=str, default="standard", choices=["standard", "prefill", "all", "no_prefill"])
     parser.add_argument("--include_glob", type=str, default=None)
     parser.add_argument("--exclude_glob", type=str, default=None)
     parser.add_argument("--include_bak", action="store_true")

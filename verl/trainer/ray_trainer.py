@@ -446,7 +446,12 @@ class RayPPOTrainer:
         self.actor_rollout_ref_wg.release_rollout_engine()
         self._maybe_log_val_generations(sample_inputs, sample_outputs, sample_labels, sample_scores)
         self.val_reward_score = torch.cat(reward_tensor_lst, dim=0).sum(-1).mean().item()
-        val_reward_metrics = {f"val/{key}_reward": value for key, value in reduce_metrics(reward_metrics_lst).items()}
+        # Filter out string-valued metrics before reduce
+        numeric_reward_metrics_lst = {
+            k: v for k, v in reward_metrics_lst.items()
+            if v and not isinstance(v[0], str)
+        }
+        val_reward_metrics = {f"val/{key}_reward": value for key, value in reduce_metrics(numeric_reward_metrics_lst).items()}
         val_length_metrics = {f"val_{key}": value for key, value in reduce_metrics(length_metrics_lst).items()}
         print("Finish validation.")
         return {"val/reward_score": self.val_reward_score, **val_reward_metrics, **val_length_metrics}
@@ -487,9 +492,26 @@ class RayPPOTrainer:
                 "video_fps": self.config.data.video_fps,
             }
             new_batch: DataProto = DataProto.from_single_dict(batch_dict, meta_info=meta_info)
-            new_batch.non_tensor_batch["uid"] = np.array(
-                [str(uuid.uuid4()) for _ in range(len(new_batch.batch))], dtype=object
-            )
+
+            # Use sample_id as uid when available (prefill datasets), else uuid4
+            if "sample_id" in new_batch.non_tensor_batch:
+                new_batch.non_tensor_batch["uid"] = np.array(
+                    [str(sid) for sid in new_batch.non_tensor_batch["sample_id"]], dtype=object
+                )
+            else:
+                new_batch.non_tensor_batch["uid"] = np.array(
+                    [str(uuid.uuid4()) for _ in range(len(new_batch.batch))], dtype=object
+                )
+
+            # Extract token from ground_truth for downstream use
+            if "ground_truth" in new_batch.non_tensor_batch:
+                tokens = []
+                for gt in new_batch.non_tensor_batch["ground_truth"]:
+                    if isinstance(gt, dict):
+                        tokens.append(gt.get("token", ""))
+                    else:
+                        tokens.append("")
+                new_batch.non_tensor_batch["token"] = np.array(tokens, dtype=object)
 
             # pop those keys for generation
             gen_batch = new_batch.pop(
@@ -633,7 +655,12 @@ class RayPPOTrainer:
                         # get token level scores asynchronously
                         reward_tensor, reward_metrics = ray.get(reward_ref)
                         batch.batch["token_level_scores"] = reward_tensor
-                        reward_metrics = {f"reward/{k}": v for k, v in reduce_metrics(reward_metrics).items()}
+                        # Filter out string-valued metrics before reduce (e.g. token lists)
+                        numeric_reward_metrics = {
+                            k: v for k, v in reward_metrics.items()
+                            if v and not isinstance(v[0], str)
+                        }
+                        reward_metrics = {f"reward/{k}": v for k, v in reduce_metrics(numeric_reward_metrics).items()}
                         metrics.update(reward_metrics)
 
                     # apply kl penalty if available

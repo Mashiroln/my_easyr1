@@ -1,6 +1,18 @@
 """ADAS inference runner: rollout + scoring -> CSV.
 
-Reuses verl's Ray + vLLM rollout + reward function infrastructure,
+⚠️  IMPORTANT: This is a LEGACY/DEMO wrapper for ADAS inference.
+    For production ADAS pipelines, use the optimized infrastructure at:
+    /mnt/data/ccy/VLA_train/parallel_infer/
+
+    The parallel_infer pipeline achieves ~20× speedup through:
+    - Fixed port binding per worker (better continuous batching)
+    - Steady-state inflight pipeline (constant GPU utilization)
+    - OpenAI choices(n=K) for repeat rollouts (prefill once, decode K times)
+    - Batch scoring via UDS RPC (aggregate by token, reduce overhead)
+
+    See /mnt/data/ccy/VLA_train/parallel_infer/README.md for details.
+
+This script reuses verl's Ray + vLLM rollout + reward function infrastructure,
 but skips all training components (optimizer, critic, ref policy).
 
 Output CSV (token, pdms, pdms_scaled) is compatible with the existing

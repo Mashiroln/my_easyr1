@@ -3,11 +3,11 @@
 
 Runs three steps:
   1. Merge scorer CSVs into a single Parquet.
-     (1.5) Optionally enrich prefill Parquet with coarse trajectory data.
   2. Compute per-scenario group-level statistics.
-  3. Filter dynamic (high-variance) samples and output a ``.txt`` token list.
+  3. Filter dynamic (high-variance) samples and output a ``.txt`` token list
+     (and ``.jsonl`` with coarse centers for prefill mode).
 
-The output ``.txt`` file is consumed directly by the verl dataloader via
+The output file is consumed directly by the verl dataloader via
 ``data.token_filter_file``, eliminating the need to pre-build a filtered
 Parquet dataset.
 
@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 
 # Allow running from scripts/adas/ directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -27,13 +28,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from merge_scorer_csv import main as merge_csv
 from compute_stats import main as compute_stats
 from filter_dynamic import main as filter_dynamic
-from enrich_prefill import enrich_parquet as enrich_prefill_parquet
-from enrich_prefill import _find_single_file
 
 
 def run_pipeline(
     infer_folder: str,
-    csv_mode: str = "all",
+    csv_mode: str = "standard",
     # Filtering hyperparameters
     diversity_threshold: float = 0.1,
     n_rollout: int = 8,
@@ -46,7 +45,6 @@ def run_pipeline(
     auto_tune: bool = True,
     # Optional overrides
     group_size_mode: str | None = None,
-    enrich_prefill: bool | None = None,
     prefill_meta_jsonl: str | None = None,
     output_dir: str | None = None,
     include_glob: str | None = None,
@@ -54,13 +52,28 @@ def run_pipeline(
 ) -> str:
     """Run one round of ADAS filtering.
 
+    Args:
+        csv_mode: ``"standard"`` (default) excludes prefill CSVs;
+            ``"prefill"`` selects only prefill CSVs.
+            Legacy aliases ``"all"`` and ``"no_prefill"`` map to ``"standard"``.
+
     Returns:
-        Path to the output ``.txt`` token list file.
+        Path to the output ``.jsonl`` (prefill) or ``.txt`` (standard) filter file.
     """
+    # Normalize legacy mode names
+    if csv_mode in ("all", "no_prefill"):
+        csv_mode = "standard"
+
     if group_size_mode is None:
         group_size_mode = "from_csv" if csv_mode == "prefill" else "fixed"
-    if enrich_prefill is None:
-        enrich_prefill = (csv_mode == "prefill")
+
+    # Auto-detect prefill_meta_jsonl for prefill mode
+    meta_jsonl = prefill_meta_jsonl
+    if csv_mode == "prefill" and meta_jsonl is None:
+        meta_matches = sorted(Path(infer_folder).glob("*.prefill_meta.jsonl"))
+        if meta_matches:
+            meta_jsonl = str(meta_matches[0])
+            print(f"Auto-detected prefill_meta: {meta_jsonl}")
 
     exp_name = os.path.basename(os.path.normpath(infer_folder))
     print("=" * 60)
@@ -76,17 +89,6 @@ def run_pipeline(
         include_glob=include_glob,
         exclude_glob=exclude_glob,
     )
-
-    # Step 1.5: Enrich prefill Parquet (conditional)
-    if csv_mode == "prefill" and enrich_prefill:
-        print("\n[Step 1.5] Enriching prefill Parquet...")
-        meta_jsonl = prefill_meta_jsonl or _find_single_file(infer_folder, ".prefill_meta.jsonl")
-        enriched_path = os.path.splitext(parquet_path)[0] + "_enriched.parquet"
-        parquet_path = enrich_prefill_parquet(
-            input_parquet=parquet_path,
-            meta_jsonl=meta_jsonl,
-            output_parquet=enriched_path,
-        )
 
     # Step 2: Compute group-level statistics
     print("\n[Step 2] Computing group-level statistics...")
@@ -104,6 +106,7 @@ def run_pipeline(
             _, _, count = filter_dynamic(
                 stats_csv, None, thresh, n_rollout, group_size,
                 group_size_mode, std_threshold, confidence_threshold,
+                prefill_meta_jsonl=meta_jsonl,
             )
             print(f"  threshold={thresh}: {count} samples")
             if target_min <= count <= target_max:
@@ -121,6 +124,7 @@ def run_pipeline(
     output_csv, txt_path, final_count = filter_dynamic(
         stats_csv, None, diversity_threshold, n_rollout, group_size,
         group_size_mode, std_threshold, confidence_threshold,
+        prefill_meta_jsonl=meta_jsonl,
     )
 
     if final_count < target_min:
@@ -128,15 +132,19 @@ def run_pipeline(
     elif final_count > target_max:
         print(f"WARNING: sample count {final_count} above target maximum {target_max}")
 
+    jsonl_path = output_csv.replace(".csv", ".jsonl")
     print("\n" + "=" * 60)
     print("Pipeline complete!")
-    print(f"  Token list: {txt_path}")
+    print(f"  Token list (txt): {txt_path}")
+    print(f"  Filter spec (jsonl): {jsonl_path}")
     print(f"  Sample count: {final_count}")
     print(f"\nTo train with these samples:")
+    if csv_mode == "prefill":
+        print(f"  data.token_filter_file={jsonl_path}  (prefill, recommended)")
     print(f"  data.token_filter_file={txt_path}")
     print("=" * 60)
 
-    return txt_path
+    return jsonl_path if csv_mode == "prefill" else txt_path
 
 
 if __name__ == "__main__":
@@ -145,13 +153,15 @@ if __name__ == "__main__":
     )
     parser.add_argument("--infer_folder", type=str, required=True,
                         help="Directory containing scorer CSV output from parallel inference")
-    parser.add_argument("--csv_mode", type=str, default="all",
-                        choices=["all", "prefill", "no_prefill"])
-    parser.add_argument("--diversity_threshold", type=float, default=0.1)
+    parser.add_argument("--csv_mode", type=str, default="standard",
+                        choices=["standard", "prefill", "all", "no_prefill"],
+                        help="'standard' (default) or 'prefill'. Legacy: 'all'/'no_prefill' → 'standard'")
+    parser.add_argument("-p", "--diversity_threshold", type=float, default=0.1)
     parser.add_argument("--n_rollout", type=int, default=8)
     parser.add_argument("--group_size", type=int, default=16)
     parser.add_argument("--std_threshold", type=float, default=0.01)
-    parser.add_argument("--confidence_threshold", type=float, default=0.1)
+    parser.add_argument("--conf", "--confidence_threshold", type=float, default=0.1,
+                        dest="confidence_threshold")
     parser.add_argument("--target_min", type=int, default=3000)
     parser.add_argument("--target_max", type=int, default=6000)
     parser.add_argument("--no_auto_tune", action="store_true")
